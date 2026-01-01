@@ -1,30 +1,30 @@
-# NGC Container Manager - Improvements Summary
+# MLEnv - ML Environment Manager - Improvements Summary
 
 ## What's New
 
 ### 1. **Idempotent Requirements Installation** ✨
 **Before:**
 ```bash
-ngc up  # installs requirements
-ngc down
-ngc up  # installs AGAIN (wasteful)
+mlenv up  # installs requirements
+mlenv down
+mlenv up  # installs AGAIN (wasteful)
 ```
 
 **After:**
 ```bash
-ngc up  # installs requirements (hash saved)
-ngc down
-ngc up  # skips (detects same file)
-ngc up --force-requirements  # force reinstall if needed
+mlenv up  # installs requirements (hash saved)
+mlenv down
+mlenv up  # skips (detects same file)
+mlenv up --force-requirements  # force reinstall if needed
 ```
 
 ### 2. **Port Forwarding** 🌐
 ```bash
 # Jupyter + TensorBoard
-ngc up --port 8888:8888,6006:6006
+mlenv up --port 8888:8888,6006:6006
 
 # Quick Jupyter command
-ngc jupyter
+mlenv jupyter
 ```
 
 ### 3. **Environment Variables** 🔐
@@ -34,16 +34,16 @@ API_KEY=secret123
 DB_HOST=localhost
 
 # Use it
-ngc up --env-file .env
+mlenv up --env-file .env
 ```
 
 ### 4. **GPU Device Selection** 🎮
 ```bash
 # Use specific GPUs
-ngc up --gpu 0,1
+mlenv up --gpu 0,1
 
 # Or all (default)
-ngc up --gpu all
+mlenv up --gpu all
 ```
 
 ### 5. **Unique Container Names** 🏷️
@@ -54,31 +54,31 @@ ngc up --gpu all
 No more root permission issues! Files created in container match your user/group.
 ```bash
 # Default (as current user)
-ngc up
+mlenv up
 
 # As root (if needed)
-ngc up --no-user-mapping
+mlenv up --no-user-mapping
 ```
 
 ### 7. **Resource Limits** 📊
 ```bash
 # Prevent hogging system resources
-ngc up --memory 16g --cpus 4.0
+mlenv up --memory 16g --cpus 4.0
 ```
 
 ### 8. **Execute Commands** 🚀
 ```bash
 # Interactive shell
-ngc exec
+mlenv exec
 
 # Run specific command
-ngc exec -c "python train.py --epochs 10"
-ngc exec -c "pip list | grep torch"
+mlenv exec -c "python train.py --epochs 10"
+mlenv exec -c "pip list | grep torch"
 ```
 
 ### 9. **Better Status Command** 📈
 ```bash
-$ ngc status
+$ mlenv status
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Container: ngc-myproject-a3f8c21d
 Status: running
@@ -94,16 +94,16 @@ index, name, utilization.gpu, memory.used, memory.total
 ```
 
 ### 10. **New Commands**
-- `ngc restart` - Quick restart
-- `ngc jupyter` - One-command Jupyter Lab
-- `ngc clean` - Remove artifacts
-- `ngc help` - Comprehensive help
+- `mlenv restart` - Quick restart
+- `mlenv jupyter` - One-command Jupyter Lab
+- `mlenv clean` - Remove artifacts
+- `mlenv help` - Comprehensive help
 
 ### 11. **Better Error Handling** 🛡️
 ```bash
 ✖ Docker daemon is not running. Start Docker and try again.
 ✖ Requirements file not found: requirements.txt
-✖ Failed to install requirements. Check logs: ngc logs
+✖ Failed to install requirements. Check logs: mlenv logs
 ```
 
 ### 12. **Improved Logging** 📝
@@ -122,13 +122,13 @@ None! Backwards compatible with original commands.
 ### From original script:
 ```bash
 # Old way
-./ngc up --requirements requirements.txt --verbose
+./mlenv up --requirements requirements.txt --verbose
 
 # New way (same!)
-./ngc up --requirements requirements.txt --verbose
+./mlenv up --requirements requirements.txt --verbose
 
 # But now you can also:
-./ngc up --requirements requirements.txt --port 8888:8888 --gpu 0
+./mlenv up --requirements requirements.txt --port 8888:8888 --gpu 0
 ```
 
 ### Container naming:
@@ -153,7 +153,7 @@ echo 'alias ngc=/path/to/ngc' >> ~/.bashrc
 ### Deep Learning Development
 ```bash
 # Full setup
-ngc up \
+mlenv up \
   --requirements requirements.txt \
   --port 8888:8888,6006:6006 \
   --gpu 0,1 \
@@ -161,27 +161,27 @@ ngc up \
   --env-file .env
 
 # Start Jupyter
-ngc jupyter
+mlenv jupyter
 
 # Run training
-ngc exec -c "python train.py --config config.yaml"
+mlenv exec -c "python train.py --config config.yaml"
 
 # Monitor
-ngc status
+mlenv status
 ```
 
 ### Quick Experimentation
 ```bash
-ngc up
-ngc exec
+mlenv up
+mlenv exec
 # ... experiment ...
-ngc down
+mlenv down
 ```
 
 ### Clean Slate
 ```bash
-ngc rm
-ngc up --force-requirements
+mlenv rm
+mlenv up --force-requirements
 ```
 
 ## Technical Improvements
