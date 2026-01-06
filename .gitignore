@@ -1,1 +1,5 @@
+# MLEnv logs and state
 .mlenv
+
+# Dev Container auto-generated config (regenerated on container creation)
+.devcontainer/

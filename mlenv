@@ -3,10 +3,10 @@ set -euo pipefail
 
 # =============================================================================
 # MLEnv - ML Environment Container Manager
-# Version: 1.0.0
+# Version: 1.1.0
 # =============================================================================
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # -----------------------------
 # Configuration
@@ -32,6 +32,8 @@ mlenv_REGISTRY="nvcr.io"
 
 # Port forwarding (comma-separated, e.g., "8888:8888,6006:6006")
 PORTS=""
+# Jupyter port (for jupyter command)
+JUPYTER_PORT=""
 # GPU devices (e.g., "0,1" or "all")
 GPU_DEVICES="all"
 # Environment file
@@ -56,7 +58,7 @@ log() {
 vlog() {
   local msg="[DEBUG] $(date '+%Y-%m-%d %H:%M:%S') - $1"
   if [ "$VERBOSE" = true ]; then
-    echo "$msg" | tee -a "$LOG_FILE"
+    echo "$msg" | tee -a "$LOG_FILE" >&2
   else
     echo "$msg" >> "$LOG_FILE"
   fi
@@ -154,6 +156,73 @@ check_requirements_file() {
 }
 
 # -----------------------------
+# Port detection
+# -----------------------------
+get_forwarded_ports() {
+  # Get all forwarded ports for the container
+  # Returns format: "host_port:container_port" one per line
+  docker inspect "$CONTAINER_NAME" 2>/dev/null | \
+    jq -r '.[0].NetworkSettings.Ports | to_entries[] | select(.value != null) | .key as $port | .value[] | "\(.HostPort):\($port | split("/")[0])"' 2>/dev/null || true
+}
+
+find_jupyter_port() {
+  # Try to find a suitable port for Jupyter from forwarded ports
+  # Priority: 8888, then 8889-8899, then first available in forwarded range
+  local forwarded_ports
+  forwarded_ports=$(get_forwarded_ports)
+  
+  if [ -z "$forwarded_ports" ]; then
+    echo ""
+    return 1
+  fi
+  
+  # Check for 8888 first
+  if echo "$forwarded_ports" | grep -q ":8888$"; then
+    echo "8888"
+    return 0
+  fi
+  
+  # Check for 8889-8899
+  for port in {8889..8899}; do
+    if echo "$forwarded_ports" | grep -q ":${port}$"; then
+      echo "$port"
+      return 0
+    fi
+  done
+  
+  # Return first forwarded port in the range
+  local first_port
+  first_port=$(echo "$forwarded_ports" | grep -E ":[0-9]+$" | head -1 | cut -d: -f2)
+  if [ -n "$first_port" ]; then
+    echo "$first_port"
+    return 0
+  fi
+  
+  echo ""
+  return 1
+}
+
+# -----------------------------
+# Image operations
+# -----------------------------
+pull_image_if_needed() {
+  # Check if image exists locally
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    vlog "Image already available locally: $IMAGE"
+    return 0
+  fi
+  
+  log "▶ Pulling image: $IMAGE"
+  info "This may take a few minutes on first run..."
+  
+  if docker pull "$IMAGE" 2>&1 | tee -a "$LOG_FILE"; then
+    success "Image pulled successfully"
+  else
+    die "Failed to pull image: $IMAGE. Check credentials with: mlenv login"
+  fi
+}
+
+# -----------------------------
 # Container operations
 # -----------------------------
 container_exists() {
@@ -177,6 +246,107 @@ get_container_status() {
 }
 
 # -----------------------------
+# Create init script for user setup
+# -----------------------------
+create_init_script() {
+  cat > "${LOG_DIR}/init.sh" <<'INIT_SCRIPT'
+#!/bin/bash
+# MLEnv container initialization script
+# This runs as root to set up the user, then keeps container running
+
+# Create group if doesn't exist
+if ! getent group "${MLENV_GID}" >/dev/null 2>&1; then
+  groupadd -g "${MLENV_GID}" "${MLENV_USER}" 2>/dev/null || true
+fi
+
+# Create user if doesn't exist
+if ! id "${MLENV_UID}" >/dev/null 2>&1; then
+  useradd -u "${MLENV_UID}" -g "${MLENV_GID}" -d "${MLENV_HOME}" -s /bin/bash "${MLENV_USER}" 2>/dev/null || true
+fi
+
+# Ensure home directory exists and has correct ownership
+mkdir -p "${MLENV_HOME}" 2>/dev/null || true
+chown "${MLENV_UID}:${MLENV_GID}" "${MLENV_HOME}" 2>/dev/null || true
+
+# Keep container running
+exec sleep infinity
+INIT_SCRIPT
+  
+  chmod +x "${LOG_DIR}/init.sh"
+  vlog "Created init script: ${LOG_DIR}/init.sh"
+}
+
+# -----------------------------
+# Create devcontainer config for VS Code integration
+# -----------------------------
+create_devcontainer_config() {
+  local devcontainer_dir="$WORKDIR/.devcontainer"
+  local devcontainer_file="$devcontainer_dir/devcontainer.json"
+  local backup_file="$LOG_DIR/devcontainer.json"
+  
+  # Create .devcontainer directory
+  mkdir -p "$devcontainer_dir"
+  
+  # Generate devcontainer.json content
+  local config_content
+  config_content=$(cat <<'DEVCONTAINER_JSON'
+{
+    "name": "MLEnv GPU Container",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "ubuntu",
+    
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "ms-python.vscode-pylance",
+                "ms-python.debugpy",
+                "charliermarsh.ruff"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/bin/python3",
+                "python.terminal.activateEnvironment": false,
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.cwd": "/workspace",
+                "files.watcherExclude": {
+                    "**/.git/objects/**": true,
+                    "**/.git/subtree-cache/**": true,
+                    "**/node_modules/*/**": true,
+                    "**/.hg/store/**": true,
+                    "**/__pycache__/**": true,
+                    "**/.mlenv/**": true
+                },
+                "jupyter.jupyterServerType": "local"
+            }
+        }
+    },
+    
+    "forwardPorts": [8888, 6006],
+    "portsAttributes": {
+        "8888": {
+            "label": "Jupyter Lab",
+            "onAutoForward": "notify"
+        },
+        "6006": {
+            "label": "TensorBoard",
+            "onAutoForward": "silent"
+        }
+    }
+}
+DEVCONTAINER_JSON
+)
+  
+  # Write to .devcontainer/ (where VS Code expects it)
+  echo "$config_content" > "$devcontainer_file"
+  
+  # Also backup to .mlenv/
+  echo "$config_content" > "$backup_file"
+  
+  vlog "Created devcontainer config: $devcontainer_file"
+}
+
+# -----------------------------
 # Build docker run arguments
 # -----------------------------
 build_docker_args() {
@@ -191,7 +361,7 @@ build_docker_args() {
   if [ "$GPU_DEVICES" = "all" ]; then
     args+=("--gpus" "all")
   else
-    args+=("--gpus" "\"device=${GPU_DEVICES}\"")
+    args+=("--gpus" "device=${GPU_DEVICES}")
   fi
   
   # Memory and performance
@@ -228,21 +398,49 @@ build_docker_args() {
     fi
   fi
   
+  # Dev Container labels (for VS Code integration)
+  args+=("--label" "devcontainer.local_folder=$WORKDIR")
+  args+=("--label" "com.microsoft.devcontainers.workspaceFolder=/workspace")
+  args+=("--label" "devcontainer.config_file=$WORKDIR/.devcontainer/devcontainer.json")
+  vlog "Added Dev Container labels for VS Code integration"
+  
   # User mapping (avoid running as root)
   if [ "$RUN_AS_USER" = true ]; then
-    args+=("--user" "$(id -u):$(id -g)")
-    vlog "Running as user: $(id -u):$(id -g)"
+    local USER_NAME="${USER:-mlenv-user}"
+    local USER_UID="$(id -u)"
+    local USER_GID="$(id -g)"
+    local USER_HOME="/home/${USER_NAME}"
+    
+    # Pass user info as environment variables
+    args+=("-e" "MLENV_USER=${USER_NAME}")
+    args+=("-e" "MLENV_UID=${USER_UID}")
+    args+=("-e" "MLENV_GID=${USER_GID}")
+    args+=("-e" "MLENV_HOME=${USER_HOME}")
+    
+    # NOTE: Do NOT set --user here - init script needs root to create user
+    # We'll exec into the container as the user later
+    vlog "Will create user: ${USER_UID}:${USER_GID} (${USER_NAME})"
+    
+    # Mount init script
+    args+=("-v" "${LOG_DIR}/init.sh:/mlenv-init.sh:ro")
+    args+=("--entrypoint" "/bin/bash")
   fi
   
   # Volume mount
   args+=("-v" "$WORKDIR:/workspace")
   args+=("-w" "/workspace")
   
-  # Image and command
+  # Image
   args+=("$IMAGE")
-  args+=("sleep" "infinity")
   
-  echo "${args[@]}"
+  # Command
+  if [ "$RUN_AS_USER" = true ]; then
+    args+=("-c" "/mlenv-init.sh")
+  else
+    args+=("sleep" "infinity")
+  fi
+  
+  printf '%s\n' "${args[@]}"
 }
 
 # -----------------------------
@@ -271,13 +469,24 @@ install_requirements() {
   
   log "▶ Installing requirements from: $rel_path"
   
-  if docker exec "$CONTAINER_NAME" bash -c \
-    "pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r '/workspace/$rel_path'" >> "$LOG_FILE" 2>&1; then
-    # Mark as installed with hash
-    md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1 > "$REQUIREMENTS_MARKER"
-    success "Requirements installed"
+  # Run pip as the user, not root
+  if [ "$RUN_AS_USER" = true ]; then
+    local user_uid="$(id -u)"
+    if docker exec --user "${user_uid}" "$CONTAINER_NAME" bash -c \
+      "pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r '/workspace/$rel_path'" >> "$LOG_FILE" 2>&1; then
+      md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1 > "$REQUIREMENTS_MARKER"
+      success "Requirements installed"
+    else
+      die "Failed to install requirements. Check logs: mlenv logs"
+    fi
   else
-    die "Failed to install requirements. Check logs: mlenv logs"
+    if docker exec "$CONTAINER_NAME" bash -c \
+      "pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r '/workspace/$rel_path'" >> "$LOG_FILE" 2>&1; then
+      md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1 > "$REQUIREMENTS_MARKER"
+      success "Requirements installed"
+    else
+      die "Failed to install requirements. Check logs: mlenv logs"
+    fi
   fi
 }
 
@@ -313,11 +522,23 @@ cmd_up() {
       success "Container started"
       ;;
     absent)
-      log "▶ Creating container: $CONTAINER_NAME"
-      local docker_args
-      docker_args="$(build_docker_args)"
+      # Pull image if needed before creating container
+      pull_image_if_needed
       
-      if eval docker run $docker_args >> "$LOG_FILE" 2>&1; then
+      # Create init script if running as user
+      if [ "$RUN_AS_USER" = true ]; then
+        create_init_script
+      fi
+      
+      # Create devcontainer config for VS Code
+      create_devcontainer_config
+      
+      log "▶ Creating container: $CONTAINER_NAME"
+      
+      # Build args array and run directly (no eval needed)
+      readarray -t docker_args < <(build_docker_args)
+      
+      if docker run "${docker_args[@]}" >> "$LOG_FILE" 2>&1; then
         success "Container created and started"
       else
         die "Failed to create container. Check logs: mlenv logs"
@@ -345,13 +566,19 @@ cmd_exec() {
     die "Container not running. Start with: mlenv up"
   fi
   
+  # Determine user for exec
+  local exec_user=""
+  if [ "$RUN_AS_USER" = true ]; then
+    exec_user="--user $(id -u):$(id -g)"
+  fi
+  
   if [ -n "$EXEC_CMD" ]; then
     # Execute specific command
     vlog "Executing command: $EXEC_CMD"
-    docker exec -it "$CONTAINER_NAME" bash -c "$EXEC_CMD"
+    docker exec -it $exec_user "$CONTAINER_NAME" bash -c "$EXEC_CMD"
   else
     # Interactive bash
-    docker exec -it "$CONTAINER_NAME" bash
+    docker exec -it $exec_user "$CONTAINER_NAME" bash
   fi
 }
 
@@ -374,8 +601,9 @@ cmd_rm() {
     log "✖ Removing container (your code on host is safe)"
     docker rm -f "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
     
-    # Clean up markers
+    # Clean up markers and init script
     rm -f "$REQUIREMENTS_MARKER"
+    rm -f "${LOG_DIR}/init.sh"
     
     success "Container removed"
   else
@@ -415,6 +643,18 @@ cmd_status() {
       echo ""
       echo "GPU Status:"
       docker exec "$CONTAINER_NAME" nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv 2>/dev/null || echo "  Unable to query GPUs"
+      
+      echo ""
+      echo "Forwarded Ports:"
+      local ports
+      ports=$(get_forwarded_ports)
+      if [ -n "$ports" ]; then
+        echo "$ports" | while IFS=: read -r host_port container_port; do
+          echo "  localhost:${host_port} → container:${container_port}"
+        done
+      else
+        echo "  No ports forwarded"
+      fi
     fi
   fi
 }
@@ -455,13 +695,131 @@ cmd_list() {
 
 cmd_jupyter() {
   check_docker
+  check_gpu
   
-  if ! container_running; then
-    die "Container not running. Start with: mlenv up --port 8888:8888"
+  # Determine which port to use (default to 8888 if not specified)
+  local container_port="${JUPYTER_PORT:-8888}"
+  local default_ports="${container_port}:${container_port}"
+  local host_port=""
+  
+  # Check container status
+  local status
+  status="$(get_container_status)"
+  
+  case "$status" in
+    absent)
+      # Container doesn't exist - create it with port forwarding
+      log "▶ Container not found. Creating with Jupyter port forwarding..."
+      
+      # Auto-detect requirements.txt if it exists and wasn't specified
+      if [ -z "$REQUIREMENTS_PATH" ] && [ -f "$WORKDIR/requirements.txt" ]; then
+        REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+        info "Auto-detected requirements.txt"
+      fi
+      
+      # Set default port forwarding if not already set
+      if [ -z "$PORTS" ]; then
+        PORTS="$default_ports"
+        info "Using default port forwarding: $PORTS"
+      fi
+      
+      # Create and start the container
+      cmd_up
+      ;;
+      
+    stopped|running)
+      # Container exists - check if it has proper port forwarding
+      vlog "Checking port forwarding on existing container..."
+      
+      # Check if the container has the required port forwarding
+      local has_port=false
+      local existing_ports
+      existing_ports=$(docker inspect "$CONTAINER_NAME" 2>/dev/null | \
+        jq -r '.[0].NetworkSettings.Ports | to_entries[] | select(.value != null) | .key' 2>/dev/null || true)
+      
+      if [ -n "$existing_ports" ]; then
+        # Check if our target port is in there
+        if echo "$existing_ports" | grep -q "^${container_port}/tcp$"; then
+          has_port=true
+        fi
+      fi
+      
+      if [ "$has_port" = false ]; then
+        # Container exists but doesn't have the required port
+        echo ""
+        warn "Container exists but port $container_port is not forwarded"
+        info "Docker doesn't allow adding ports to existing containers"
+        info "Recreating container with port forwarding: $default_ports"
+        echo ""
+        
+        # Auto-detect requirements.txt if it exists and wasn't specified
+        if [ -z "$REQUIREMENTS_PATH" ] && [ -f "$WORKDIR/requirements.txt" ]; then
+          REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+          info "Auto-detected requirements.txt for recreation"
+        fi
+        
+        # Remove the old container
+        log "▶ Removing old container..."
+        cmd_rm
+        
+        # Set port forwarding for recreation
+        if [ -z "$PORTS" ]; then
+          PORTS="$default_ports"
+        fi
+        
+        # Recreate with port forwarding
+        log "▶ Creating new container with port forwarding..."
+        cmd_up
+      else
+        # Port is forwarded, just ensure container is running
+        if [ "$status" = "stopped" ]; then
+          log "▶ Starting existing container"
+          docker start "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
+          success "Container started"
+          sleep 1
+        else
+          vlog "Container already running with proper port forwarding"
+        fi
+      fi
+      ;;
+  esac
+  
+  # Now container is running with proper ports - find the host port
+  if [ -z "$JUPYTER_PORT" ]; then
+    # Try to auto-detect a suitable port from forwarded ports
+    container_port=$(find_jupyter_port)
+    
+    if [ -z "$container_port" ]; then
+      # This shouldn't happen after our setup above, but just in case
+      die "Failed to detect Jupyter port after container setup"
+    fi
+    
+    vlog "Auto-detected container port: $container_port"
   fi
   
-  log "▶ Starting Jupyter Lab on port 8888"
-  docker exec -it "$CONTAINER_NAME" bash -c "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root"
+  # Find the corresponding host port
+  host_port=$(get_forwarded_ports | grep ":${container_port}$" | cut -d: -f1 | head -1)
+  
+  if [ -z "$host_port" ]; then
+    # This also shouldn't happen after our setup
+    die "Failed to detect host port mapping after container setup"
+  fi
+  
+  log "▶ Starting Jupyter Lab on container port $container_port"
+  
+  # Show access info
+  echo ""
+  success "Jupyter will be accessible at: http://localhost:$host_port"
+  info "Token will be shown below..."
+  echo ""
+  
+  # Run as user if user mapping is enabled
+  local exec_user=""
+  if [ "$RUN_AS_USER" = true ]; then
+    exec_user="--user $(id -u):$(id -g)"
+  fi
+  
+  docker exec -it $exec_user "$CONTAINER_NAME" bash -c "jupyter lab --ip=0.0.0.0 --port=$container_port --no-browser --allow-root"
 }
 
 cmd_clean() {
@@ -637,7 +995,7 @@ COMMANDS:
   rm          Remove container (keeps your code safe)
   status      Show container status and GPU info
   list        List all MLEnv containers across projects
-  jupyter     Start Jupyter Lab on port 8888
+  jupyter     Start Jupyter Lab
   logs        View debug logs
   clean       Remove MLEnv artifacts
   version     Show version information
@@ -658,6 +1016,9 @@ OPTIONS (for 'up' command):
 OPTIONS (for 'exec' command):
   -c <command>                Execute command instead of interactive shell
 
+OPTIONS (for 'jupyter' command):
+  --port <port>               Port to run Jupyter on (default: auto-detect)
+
 EXAMPLES:
   # First time setup - authenticate with mlenv
   mlenv login
@@ -666,9 +1027,20 @@ EXAMPLES:
   mlenv up
   mlenv exec
 
-  # Full setup with Jupyter
-  mlenv up --requirements requirements.txt --port 8888:8888,6006:6006 --verbose
+  # Full setup with Jupyter (auto-detects port 8888)
+  mlenv up --requirements requirements.txt --port 8888:8888,6006:6006
   mlenv jupyter
+
+  # Jupyter on custom port (auto-detects port 8889)
+  mlenv up --port 8889:8889
+  mlenv jupyter
+  # Access at: http://localhost:8889
+
+  # Multiple Jupyter instances on same container
+  mlenv up --port 8888:8888,8889:8889,8890:8890
+  mlenv jupyter --port 8888    # Terminal 1 → http://localhost:8888
+  mlenv jupyter --port 8889    # Terminal 2 → http://localhost:8889
+  mlenv jupyter --port 8890    # Terminal 3 → http://localhost:8890
 
   # Use private mlenv image
   mlenv up --image nvcr.io/your-org/your-private-image:latest
@@ -700,6 +1072,17 @@ CLEAN OPTIONS:
   --containers        Remove stopped MLEnv containers
   --images            Remove dangling Docker images
   --all               Clean everything
+
+PORT FORWARDING NOTES:
+  • Port forwarding must be set during container creation (mlenv up --port)
+  • Format: "host_port:container_port" (e.g., "8888:8888" or "9000:8888")
+  • mlenv jupyter automatically detects forwarded ports and uses them
+  • Priority order: 8888 → 8889-8899 → first available forwarded port
+  • For multiple Jupyter instances, forward multiple ports:
+    mlenv up --port 8888:8888,8889:8889,8890:8890
+  • Use --port with jupyter command to override auto-detection:
+    mlenv jupyter --port 8889
+  • Check current forwarding with: mlenv status
 
 NOTES:
   • Your code stays on the host (bind-mounted to /workspace)
@@ -741,7 +1124,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --port)
-      PORTS="$2"
+      # Handle both --port for 'up' and 'jupyter' commands
+      if [ "$command" = "jupyter" ]; then
+        JUPYTER_PORT="$2"
+      else
+        PORTS="$2"
+      fi
       shift 2
       ;;
     --gpu)

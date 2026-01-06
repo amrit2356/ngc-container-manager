@@ -5,6 +5,50 @@ All notable changes to MLEnv - ML Environment Manager will be documented in this
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-01-07
+
+### Added
+- **VS Code Dev Containers Integration** 🚀
+  - Auto-generates `.devcontainer/devcontainer.json` on container creation
+  - Container labels for VS Code Dev Containers recognition
+  - Automatic workspace folder configuration (`/workspace`)
+  - Pre-configured VS Code extensions (Python, Jupyter, Pylance, Debugpy, Ruff)
+  - Optimized settings for ML development
+  - Port forwarding configuration (Jupyter Lab, TensorBoard)
+  - Seamless IDE integration with IntelliSense for container packages
+
+- **Smart Jupyter Command**
+  - `mlenv jupyter` now auto-creates containers if they don't exist
+  - Automatically sets up port forwarding (default: `8888:8888`)
+  - Auto-detects and uses `requirements.txt` if present
+  - Auto-recreates containers with proper port forwarding if needed
+  - No longer requires running `mlenv up` first
+
+- **Intelligent Port Management**
+  - Auto-detects forwarded ports with priority (8888 → 8889-8899 → first available)
+  - Automatic container recreation when port forwarding is missing
+  - Better error messages with fix suggestions
+  - Seamless port detection for Jupyter Lab
+
+### Fixed
+- Fixed `get_forwarded_ports()` jq filter bug that prevented port detection
+  - Corrected variable scoping in jq query
+  - Now properly captures container port when iterating through values
+
+### Changed
+- `.devcontainer/` directory now auto-generated and gitignored
+- Devcontainer config stored in both `.devcontainer/` (for VS Code) and `.mlenv/` (backup)
+- Updated `.gitignore` to include auto-generated Dev Container files
+- Enhanced `mlenv jupyter` to be a fully autonomous command
+
+### Documentation
+- Added comprehensive VS Code Integration section to README
+- Updated Quick Start guide with VS Code workflow
+- Added VS Code troubleshooting guide
+- Updated project structure examples
+- Enhanced security best practices section
+- Reorganized roadmap (moved VS Code integration from v2.0 to completed in v1.1.0)
+
 ## [1.0.0] - 2025-01-01
 
 ### Added
@@ -83,25 +127,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v1.1
+### Planned for v1.2
 - [ ] Automatic update checker and updater
 - [ ] Container resource usage in status
 - [ ] Improved error messages with suggestions
 - [ ] Full integration test suite
 
-### Planned for v1.2
+### Planned for v1.3
 - [ ] Config file support (`~/.ngcrc`)
 - [ ] Project templates
 - [ ] Auto GPU detection
 - [ ] SSH server for remote development
 
 ### Planned for v2.0
-- [ ] VS Code integration
-- [ ] Multi-container support
-- [ ] Experiment tracking integration
-- [ ] GPU scheduling
+- [ ] Multi-container support (docker-compose style)
+- [ ] Experiment tracking integration (W&B, MLflow)
+- [ ] GPU scheduling (wait for availability)
 - [ ] Jupyter extensions auto-install
-- [ ] Team dashboard
+- [ ] Team dashboard for shared servers
+- [ ] Cloud integration (AWS, GCP, Azure)
 
 ## Contributing
 

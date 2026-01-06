@@ -1,12 +1,13 @@
 # MLEnv - ML Environment Manager
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 ![NVIDIA](https://img.shields.io/badge/NVIDIA-GPU-76B900?logo=nvidia)
 ![Docker](https://img.shields.io/badge/Docker-20.10+-2496ED?logo=docker&logoColor=white)
 ![Bash](https://img.shields.io/badge/Bash-4EAA25?logo=gnubash&logoColor=white)
 ![CUDA](https://img.shields.io/badge/CUDA-Enabled-76B900)
+![VS Code](https://img.shields.io/badge/VS%20Code-Dev%20Containers-007ACC?logo=visualstudiocode)
 
 **Production-Ready GPU Container Management**
 
@@ -15,6 +16,8 @@ A production-grade command-line tool for managing NVIDIA GPU-accelerated Docker 
 ## 🚀 Features
 
 - **Zero-Config GPU Access** - Automatic NVIDIA GPU detection and passthrough
+- **VS Code Dev Containers** - Auto-generated config for seamless VS Code integration
+- **Smart Jupyter** - `mlenv jupyter` auto-creates containers with port forwarding
 - **Smart Requirements Management** - Hash-based caching prevents redundant pip installs
 - **Persistent Workspaces** - Your code stays on the host (bind-mounted)
 - **Port Forwarding** - Easy access to Jupyter, TensorBoard, APIs
@@ -123,14 +126,33 @@ mlenv up --image nvcr.io/your-org/your-private-image:latest
 
 ### With Jupyter Lab
 ```bash
-# Start with port forwarding
-mlenv up --port 8888:8888
+# Simple - auto-creates container with port forwarding
+mlenv jupyter
 
-# Launch Jupyter
+# Or with manual setup
+mlenv up --port 8888:8888
 mlenv jupyter
 
 # Open the URL shown in terminal
 # http://localhost:8888/...
+```
+
+### With VS Code Dev Containers
+```bash
+# Start container (creates .devcontainer/devcontainer.json automatically)
+mlenv up --port 8888:8888
+
+# In VS Code:
+# 1. Install "Dev Containers" extension
+# 2. Ctrl+Shift+P → "Dev Containers: Open Folder in Container"
+# 3. Select your project folder
+# 4. VS Code opens in /workspace with GPU access!
+
+# Benefits:
+# - Python IntelliSense works with container packages
+# - Jupyter notebooks run in container kernel
+# - Integrated terminal runs inside container
+# - All extensions auto-installed
 ```
 
 ### With Requirements
@@ -156,7 +178,7 @@ mlenv exec
 | `mlenv restart` | Restart container |
 | `mlenv rm` | Remove container (keeps code) |
 | `mlenv status` | Show container and GPU status |
-| `mlenv jupyter` | Start Jupyter Lab |
+| `mlenv jupyter` | Start Jupyter Lab (auto-creates container with ports) |
 | `mlenv logs` | View debug logs |
 | `mlenv clean` | Remove NGC artifacts |
 | `mlenv help` | Show detailed help |
@@ -369,7 +391,7 @@ Host Machine                    Docker Container
 │                 │   mount    │                 │
 │  ├── train.py   │            │  ├── train.py   │
 │  ├── data/      │            │  ├── data/      │
-│  └── .mlenv/      │            │  └── (GPUs)     │
+│  └── .mlenv/    │            │  └── (GPUs)     │
 └─────────────────┘            └─────────────────┘
         ▲                               │
         └──────────────┬────────────────┘
@@ -388,6 +410,105 @@ Host Machine                    Docker Container
 4. **Unique Naming**: Container names include a directory hash (`ngc-myproject-a3f8c21d`) to prevent collisions across different project directories.
 
 5. **User Mapping**: By default, runs as your user (`uid:gid`) to avoid permission issues with created files.
+
+## 💻 VS Code Integration
+
+MLEnv automatically generates VS Code Dev Container configuration for seamless integration.
+
+### Quick Start with VS Code
+
+```bash
+# 1. Start your container
+mlenv jupyter  # or: mlenv up --port 8888:8888
+
+# 2. In VS Code, install "Dev Containers" extension
+
+# 3. Attach to container
+# Ctrl+Shift+P → "Dev Containers: Open Folder in Container"
+# Select your project directory
+
+# VS Code will:
+# ✅ Open in /workspace (your project files)
+# ✅ Auto-install Python, Jupyter, Pylance extensions
+# ✅ Configure Python interpreter from container
+# ✅ Enable GPU-accelerated development
+```
+
+### What Gets Auto-Configured
+
+When you create a container, MLEnv automatically generates `.devcontainer/devcontainer.json` with:
+
+- **Workspace Folder**: `/workspace` (auto-opens here)
+- **Remote User**: `ubuntu` (not root)
+- **Extensions**: Python, Jupyter, Pylance, Debugpy, Ruff
+- **Port Forwarding**: 8888 (Jupyter Lab), 6006 (TensorBoard)
+- **Settings**: Optimized for ML development
+
+### Features You Get
+
+```bash
+# IntelliSense with container packages
+# Works with transformers, torch, etc. installed in container
+
+# Jupyter notebooks
+# Use container's kernel directly in VS Code
+
+# Integrated terminal
+# Runs inside container with GPU access
+
+# Debugging
+# Debug Python code with container's interpreter
+
+# File sync
+# Changes sync automatically between host and container
+```
+
+### Manual Connection Setup
+
+If you prefer to connect to an existing Jupyter server:
+
+```bash
+# 1. Start Jupyter
+mlenv jupyter
+
+# 2. Copy the token URL (e.g., http://127.0.0.1:8888/lab?token=...)
+
+# 3. In VS Code:
+# - Open a .ipynb file
+# - Click "Select Kernel"
+# - Choose "Existing Jupyter Server"
+# - Paste the URL (change /lab to /?token=...)
+# - Select Python kernel
+```
+
+### Troubleshooting VS Code
+
+**Opens in /root instead of /workspace:**
+```bash
+# Ensure .devcontainer/devcontainer.json exists
+ls .devcontainer/devcontainer.json
+
+# If missing, recreate container
+mlenv rm
+mlenv jupyter  # Auto-generates config
+```
+
+**Extensions not installed:**
+```bash
+# Check devcontainer.json exists
+cat .devcontainer/devcontainer.json
+
+# Reload window: Ctrl+Shift+P → "Developer: Reload Window"
+```
+
+**Files not syncing:**
+```bash
+# Verify you're in /workspace
+pwd  # Should show: /workspace
+
+# If in wrong directory:
+# File → Open Folder → /workspace
+```
 
 ## 🛠️ Advanced Usage
 
@@ -578,10 +699,11 @@ docker rm -f ngc-oldname-12345678
 1. **Use `.gitignore`**:
 ```bash
 # .gitignore
-.mlenv/
-.env
-*.pth
-*.ckpt
+.mlenv/            # MLEnv state and logs
+.devcontainer/     # Auto-generated VS Code config
+.env              # Environment variables
+*.pth             # PyTorch checkpoints
+*.ckpt            # Model checkpoints
 ```
 
 2. **Environment Variables**: Never commit API keys. Use `--env-file` with `.env` in `.gitignore`.
@@ -604,17 +726,21 @@ ssh -L 8888:localhost:8888 user@remote-server
 ### Project Structure
 ```
 my-ml-project/
-├── ngc                 # This script
-├── requirements.txt    # Python dependencies
-├── .env               # Environment variables (gitignored)
-├── .gitignore         # Ignore .mlenv/, .env, checkpoints
-├── train.py           # Training script
-├── evaluate.py        # Evaluation script
-├── data/              # Dataset
-├── models/            # Saved models
-├── notebooks/         # Jupyter notebooks
-└── .mlenv/              # NGC logs (gitignored)
-    └── ngc.log
+├── mlenv                 # This script
+├── requirements.txt      # Python dependencies
+├── .env                 # Environment variables (gitignored)
+├── .gitignore           # Ignore .mlenv/, .devcontainer/, .env
+├── train.py             # Training script
+├── evaluate.py          # Evaluation script
+├── data/                # Dataset
+├── models/              # Saved models
+├── notebooks/           # Jupyter notebooks
+├── .mlenv/              # MLEnv state (gitignored)
+│   ├── mlenv.log        # Debug logs
+│   ├── devcontainer.json # VS Code config backup
+│   └── init.sh          # Container init script
+└── .devcontainer/       # VS Code Dev Container (auto-generated, gitignored)
+    └── devcontainer.json
 ```
 
 ### Workflow
@@ -654,38 +780,44 @@ chmod +x ngc
 
 Current version has a few limitations we're aware of:
 
-- **No version command** - ~~Can't check installed version~~ ✅ Added in v1.0.0
 - **Manual updates** - No built-in update mechanism (requires git pull + reinstall)
 - **No config file** - Can't set persistent defaults (`.ngcrc` planned)
-- **Basic cleanup** - ~~Old containers need manual removal~~ ✅ Added `mlenv clean --containers` in v1.0.0
 - **Manual completion reload** - Shell completions require terminal restart
+- **Container logs** - No built-in log aggregation (use `docker logs` or `mlenv logs`)
 
-**Note:** This tool is designed for Linux systems with NVIDIA GPUs. macOS and Windows native are not supported. Windows users should use WSL2.
+**Note:** This tool is designed for Linux systems with NVIDIA GPUs. macOS and Windows native are not supported. Windows users should use WSL2 with NVIDIA GPU support.
 
 See the [Roadmap](#-roadmap) below for planned improvements.
 
 ## 🗺️ Roadmap
 
-### v1.1 (Next Release)
+### v1.1.0 (Current Release) ✨
+
+**New Features:**
+- ✅ **VS Code Dev Containers** - Auto-generate `.devcontainer/devcontainer.json` for seamless IDE integration
+- ✅ **Smart Jupyter** - `mlenv jupyter` auto-creates containers with port forwarding (no `mlenv up` needed)
+- ✅ **Auto-port detection** - Jupyter automatically finds and uses forwarded ports
+- ✅ **Container auto-recreation** - Rebuilds containers with correct ports if needed
+
+### v1.2 (Next Release)
 - [ ] **Auto-update mechanism** - `mlenv update` to pull latest version
-- [ ] **Container listing** - ~~`mlenv list` to show all NGC containers~~ ✅ Added in v1.0.0
 - [ ] **Enhanced status** - Show resource usage (CPU, memory, GPU utilization)
 - [ ] **Better error messages** - Contextual help and suggestions
 
-### v1.2 (Planned)
+### v1.3 (Planned)
 - [ ] **Config file support** - `~/.ngcrc` for default settings
 - [ ] **Project templates** - `mlenv init --template pytorch|tensorflow|transformers`
 - [ ] **Auto GPU detection** - `mlenv up --auto-gpu` to find free GPUs
 - [ ] **Better testing** - Full integration test suite
 
 ### v2.0 (Future)
-- [ ] **VS Code integration** - Auto-generate `.devcontainer.json`
 - [ ] **Multi-container** - Support for related services (db, web, training)
 - [ ] **Experiment tracking** - Built-in W&B, MLflow integration
 - [ ] **GPU scheduling** - Wait for GPU availability
 - [ ] **Jupyter extensions** - Auto-install popular extensions
 - [ ] **Central management** - Team dashboard for shared servers
 - [ ] **Container snapshots** - Save/restore container state
+- [ ] **Cloud integration** - Easy deployment to cloud GPU providers
 
 ### Want a Feature?
 Open an issue describing your use case, or submit a PR! Popular requests get prioritized.
