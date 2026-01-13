@@ -218,6 +218,193 @@ cmd_logout() {
     ngc_auth_registry_logout
 }
 
+# Port detection helpers
+get_forwarded_ports() {
+    # Get all forwarded ports for the container
+    # Returns format: "host_port:container_port" one per line
+    container_get_forwarded_ports "$CONTAINER_NAME" 2>/dev/null || true
+}
+
+find_jupyter_port() {
+    # Try to find a suitable port for Jupyter from forwarded ports
+    # Priority: 8888, then 8889-8899, then first available in forwarded range
+    local forwarded_ports
+    forwarded_ports=$(get_forwarded_ports)
+    
+    if [[ -z "$forwarded_ports" ]]; then
+        echo ""
+        return 1
+    fi
+    
+    # Check for 8888 first
+    if echo "$forwarded_ports" | grep -q ":8888$"; then
+        echo "8888"
+        return 0
+    fi
+    
+    # Check for 8889-8899
+    for port in {8889..8899}; do
+        if echo "$forwarded_ports" | grep -q ":${port}$"; then
+            echo "$port"
+            return 0
+        fi
+    done
+    
+    # Return first forwarded port in the range
+    local first_port
+    first_port=$(echo "$forwarded_ports" | grep -E ":[0-9]+$" | head -1 | cut -d: -f2)
+    if [[ -n "$first_port" ]]; then
+        echo "$first_port"
+        return 0
+    fi
+    
+    echo ""
+    return 1
+}
+
+cmd_jupyter() {
+    # Determine which port to use (default to 8888 if not specified)
+    local container_port="${JUPYTER_PORT:-8888}"
+    local default_ports="${container_port}:${container_port}"
+    local host_port=""
+    
+    # Check container status
+    local status=$(container_get_status "$CONTAINER_NAME")
+    
+    case "$status" in
+        absent)
+            # Container doesn't exist - create it with port forwarding
+            log "▶ Container not found. Creating with Jupyter port forwarding..."
+            
+            # Auto-detect requirements.txt if it exists and wasn't specified
+            if [[ -z "$REQUIREMENTS_PATH" ]] && [[ -f "$WORKDIR/requirements.txt" ]]; then
+                REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+                info "Auto-detected requirements.txt"
+            fi
+            
+            # Set default port forwarding if not already set
+            if [[ -z "$PORTS" ]]; then
+                PORTS="$default_ports"
+                info "Using default port forwarding: $PORTS"
+            fi
+            
+            # Export for container creation
+            export MLENV_PORTS="$PORTS"
+            
+            # Create and start the container
+            cmd_up
+            ;;
+            
+        stopped|running)
+            # Container exists - check if it has proper port forwarding
+            vlog "Checking port forwarding on existing container..."
+            
+            # Check if the container has the required port forwarding
+            local has_port=false
+            local existing_ports
+            existing_ports=$(get_forwarded_ports)
+            
+            if [[ -n "$existing_ports" ]]; then
+                # Check if our target port is in there
+                if echo "$existing_ports" | grep -q ":${container_port}$"; then
+                    has_port=true
+                fi
+            fi
+            
+            if [[ "$has_port" == "false" ]]; then
+                # Container exists but doesn't have the required port
+                echo ""
+                warn "Container exists but port $container_port is not forwarded"
+                info "Docker doesn't allow adding ports to existing containers"
+                info "Recreating container with port forwarding: $default_ports"
+                echo ""
+                
+                # Auto-detect requirements.txt if it exists and wasn't specified
+                if [[ -z "$REQUIREMENTS_PATH" ]] && [[ -f "$WORKDIR/requirements.txt" ]]; then
+                    REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+                    info "Auto-detected requirements.txt for recreation"
+                fi
+                
+                # Remove the old container
+                log "▶ Removing old container..."
+                cmd_rm
+                
+                # Set port forwarding for recreation
+                if [[ -z "$PORTS" ]]; then
+                    PORTS="$default_ports"
+                fi
+                
+                # Export for container creation
+                export MLENV_PORTS="$PORTS"
+                
+                # Recreate with port forwarding
+                log "▶ Creating new container with port forwarding..."
+                cmd_up
+                # Give container a moment to fully initialize
+                sleep 2
+            else
+                # Port is forwarded, just ensure container is running
+                if [[ "$status" == "stopped" ]]; then
+                    log "▶ Starting existing container"
+                    container_start "$CONTAINER_NAME"
+                    success "Container started"
+                    sleep 1
+                else
+                    vlog "Container already running with proper port forwarding"
+                fi
+            fi
+            ;;
+    esac
+    
+    # Give container a moment to be ready if it was just created
+    vlog "Waiting for container to be fully ready..."
+    sleep 1
+    
+    # Now container is running with proper ports - find the host port
+    if [[ -z "$JUPYTER_PORT" ]]; then
+        # Try to auto-detect a suitable port from forwarded ports
+        local detected_port
+        detected_port=$(find_jupyter_port) || true
+        
+        if [[ -n "$detected_port" ]]; then
+            container_port="$detected_port"
+            vlog "Auto-detected container port: $container_port"
+        else
+            # Fallback: use default port we set earlier
+            container_port="8888"
+            vlog "Using default port: $container_port"
+        fi
+    fi
+    
+    # Find the corresponding host port
+    local all_ports
+    all_ports=$(get_forwarded_ports)
+    host_port=$(echo "$all_ports" | grep ":${container_port}$" | cut -d: -f1 | head -1) || true
+    
+    if [[ -z "$host_port" ]]; then
+        die "Failed to detect host port mapping for container port $container_port. Available ports: $all_ports"
+    fi
+    
+    log "▶ Starting Jupyter Lab on container port $container_port"
+    
+    # Show access info
+    echo ""
+    success "Jupyter will be accessible at: http://localhost:$host_port"
+    info "Token will be shown below..."
+    echo ""
+    
+    # Build exec args
+    local exec_args=("-it")
+    
+    if [[ "$RUN_AS_USER" == "true" ]]; then
+        exec_args+=("--user" "$(id -u):$(id -g)")
+    fi
+    
+    exec_args+=("bash" "-c" "jupyter lab --ip=0.0.0.0 --port=$container_port --no-browser --allow-root")
+    
+    container_exec "$CONTAINER_NAME" "${exec_args[@]}"
+}
+
 cmd_config() {
     local subcmd="${1:-show}"
     shift || true
@@ -268,6 +455,7 @@ COMMANDS:
   restart     Restart container
   rm          Remove container (keeps your code safe)
   status      Show container status
+  jupyter     Start Jupyter Lab (auto-detects ports)
   logs        View debug logs
   config      Manage configuration
   version     Show version information
@@ -291,6 +479,12 @@ OPTIONS (for 'up' command):
   --no-user-mapping           Run as root instead of current user
   --verbose                   Enable verbose output
 
+OPTIONS (for 'exec' command):
+  -c <command>                Execute command instead of interactive shell
+
+OPTIONS (for 'jupyter' command):
+  --port <port>               Port to run Jupyter on (default: auto-detect)
+
 EXAMPLES:
   # Basic setup
   mlenv up
@@ -301,8 +495,30 @@ EXAMPLES:
   # Edit ~/.mlenvrc with your preferences
   mlenv up
 
-  # Full setup with Jupyter
+  # Full setup with Jupyter (auto-detects port 8888)
   mlenv up --requirements requirements.txt --port 8888:8888,6006:6006
+  mlenv jupyter
+  # Access at: http://localhost:8888
+
+  # Jupyter on custom port
+  mlenv up --port 8889:8889
+  mlenv jupyter
+  # Access at: http://localhost:8889
+
+  # Multiple Jupyter instances on same container
+  mlenv up --port 8888:8888,8889:8889,8890:8890
+  mlenv jupyter --port 8888    # Terminal 1 → http://localhost:8888
+  mlenv jupyter --port 8889    # Terminal 2 → http://localhost:8889
+
+  # Run specific command
+  mlenv exec -c "python train.py --epochs 10"
+  
+PORT FORWARDING NOTES:
+  • Port forwarding must be set during container creation (mlenv up --port)
+  • Format: "host_port:container_port" (e.g., "8888:8888")
+  • mlenv jupyter automatically detects forwarded ports
+  • Priority: 8888 → 8889-8899 → first available
+  • Check current forwarding with: mlenv status
   
 For more information: https://github.com/your-username/mlenv
 EOF
@@ -369,7 +585,12 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --port)
-            PORTS="$2"
+            # Handle both --port for 'up' and 'jupyter' commands
+            if [[ "$command" == "jupyter" ]]; then
+                JUPYTER_PORT="$2"
+            else
+                PORTS="$2"
+            fi
             shift 2
             ;;
         --gpu)
@@ -430,6 +651,7 @@ case "$command" in
     rm)       cmd_rm ;;
     logs)     cmd_logs ;;
     status)   cmd_status ;;
+    jupyter)  cmd_jupyter ;;
     config)   cmd_config "$@" ;;
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
