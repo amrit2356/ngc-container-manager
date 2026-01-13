@@ -164,5 +164,5 @@ engine_get_info() {
     echo "MLEnv Engine v$(engine_get_version)"
     echo "Container Adapter: ${MLENV_ACTIVE_CONTAINER_ADAPTER:-none}"
     echo "Registry Adapter: ${MLENV_ACTIVE_REGISTRY_ADAPTER:-none}"
-    echo "Log Level: ${MLENV_LOG_LEVEL}"
+    echo "Log Level: ${MLENV_LOG_LEVEL:-info}"
 }

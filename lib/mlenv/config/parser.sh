@@ -107,7 +107,7 @@ config_apply_env_overrides() {
     
     for mapping in "${env_mappings[@]}"; do
         IFS=':' read -r env_var config_key <<< "$mapping"
-        if [[ -n "${!env_var}" ]]; then
+        if [[ -n "${!env_var:-}" ]]; then
             MLENV_CONFIG["$config_key"]="${!env_var}"
             vlog "  Env override: $config_key = ${!env_var}"
         fi
