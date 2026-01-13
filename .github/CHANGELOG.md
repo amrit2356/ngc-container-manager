@@ -5,6 +5,133 @@ All notable changes to MLEnv - ML Environment Manager will be documented in this
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2025-01-XX
+
+### Added
+
+#### Architecture & Infrastructure
+- **Hexagonal Architecture** - Complete refactor with Ports & Adapters pattern
+  - Modular codebase with 70+ organized files
+  - Separation of concerns: core logic, adapters, ports, utilities
+  - 100% backward compatible with v1.x commands
+- **SQLite Backend** - Persistent state management
+  - 9 database tables + 2 views for comprehensive tracking
+  - Container lifecycle tracking
+  - Historical metrics storage
+  - Database initialization and migration support
+- **Professional Testing Framework**
+  - 25+ automated tests (unit, integration, E2E)
+  - Test framework with assertions library
+  - CI/CD integration with GitHub Actions
+  - 100% test pass rate
+
+#### Safety & Monitoring
+- **🛡️ Admission Control** - System crash prevention
+  - Pre-flight resource checks before container creation
+  - Memory threshold: 85% max usage
+  - CPU threshold: 90% max usage
+  - Minimum available memory: 4GB required
+  - Load average validation
+  - GPU availability verification
+- **📊 Resource Monitoring** - Real-time and historical tracking
+  - CPU utilization monitoring
+  - Memory usage tracking
+  - GPU utilization and memory monitoring
+  - Historical metrics storage
+  - Project-level resource quotas
+- **🏥 Health Checks** - Container wellness monitoring
+  - Automatic container health tracking
+  - Status reporting and alerts
+  - Container lifecycle management
+
+#### Intelligence & Automation
+- **🤖 Auto GPU Detection** - Smart GPU allocation
+  - `mlenv up --auto-gpu` intelligently selects free GPUs
+  - Best GPU selection algorithm
+  - Multi-GPU support
+  - GPU status display with `mlenv gpu status`
+- **🎨 Project Templates** - Quick-start project scaffolding
+  - `mlenv init --template pytorch` - Complete PyTorch deep learning setup
+  - `mlenv init --template minimal` - Basic project structure
+  - Template validation and customization
+  - Template engine with YAML configuration
+- **🐳 NGC Catalog** - Container image management
+  - `mlenv catalog search` - Search NVIDIA NGC catalog
+  - `mlenv catalog add` - Add images to favorites
+  - `mlenv catalog list` - Browse managed images
+  - Catalog persistence in SQLite database
+
+#### Configuration & Developer Experience
+- **⚙️ Config File Support** - Persistent defaults
+  - Global config: `~/.mlenvrc`
+  - Project-level config: `.mlenvrc` in project directory
+  - System-wide config: `/etc/mlenv/mlenv.conf`
+  - 4-level configuration hierarchy with validation
+- **Enhanced Commands**
+  - Improved `mlenv list` - Shows all containers across projects
+  - Enhanced `mlenv clean` - Interactive cleanup with options
+  - Better `mlenv status` - Resource usage display
+  - `mlenv init` - Project initialization with templates
+  - `mlenv catalog` - NGC image management
+
+#### Enterprise Features
+- **📦 Linux Packages** - Production-ready distribution
+  - Debian package (`.deb`) with full lifecycle hooks
+  - RPM package (`.spec`) for RHEL/CentOS/Fedora
+  - Professional build scripts
+  - Package installation and uninstallation support
+- **Professional Installer**
+  - Prerequisite checking (Docker, SQLite, NVIDIA Container Toolkit)
+  - Database initialization
+  - Shell completion installation (bash/zsh/fish)
+  - Uninstaller support
+  - Custom installation directory support
+- **CI/CD Integration**
+  - GitHub Actions workflows for testing
+  - Automated release workflows
+  - Documentation generation pipeline
+- **Comprehensive Documentation**
+  - 10+ documentation guides
+  - Getting Started guide
+  - Deployment guide
+  - Migration guide from v1.x
+  - Architecture documentation
+  - API and CLI reference
+  - Development guides
+
+### Changed
+- **Complete codebase refactor** - From monolithic script to modular architecture
+- **Configuration system** - From no config to 4-level hierarchy
+- **Container naming** - Enhanced with better collision prevention
+- **Error handling** - Professional error messages with context
+- **Logging system** - Structured logging with levels
+- **README structure** - Streamlined landing page pointing to comprehensive docs
+
+### Fixed
+- All v1.x bugs addressed in refactor
+- Improved error messages with actionable suggestions
+- Better handling of edge cases in GPU detection
+- Enhanced port conflict resolution
+
+### Removed
+- Monolithic script structure (replaced with modular architecture)
+- Manual configuration (replaced with config file system)
+
+### Documentation
+- Complete documentation overhaul
+- New documentation site structure (`docs/`)
+- Architecture documentation
+- Development guides
+- Testing documentation
+- Deployment guides
+- Migration guide from v1.x
+
+### Known Limitations
+- No automatic update mechanism (planned for v2.1)
+- No web dashboard (planned for v2.1)
+- Limited template selection (more templates planned)
+- No remote development server (planned for v2.1)
+
 ## [1.1.0] - 2025-01-07
 
 ### Added
@@ -127,25 +254,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v1.2
-- [ ] Automatic update checker and updater
-- [ ] Container resource usage in status
-- [ ] Improved error messages with suggestions
-- [ ] Full integration test suite
+### Planned for v2.1
+- [ ] Web Dashboard - Monitor containers and GPUs via web UI
+- [ ] More Templates - TensorFlow, Transformers, Stable Diffusion
+- [ ] Remote Development - SSH server for remote access
+- [ ] Enhanced Monitoring - Real-time graphs and alerts
 
-### Planned for v1.3
-- [ ] Config file support (`~/.ngcrc`)
-- [ ] Project templates
-- [ ] Auto GPU detection
-- [ ] SSH server for remote development
+### Planned for v2.2
+- [ ] Experiment Tracking - Built-in W&B, MLflow integration
+- [ ] Multi-container - Docker Compose-style orchestration
+- [ ] GPU Scheduling - Queue and wait for GPU availability
+- [ ] Jupyter Extensions - Auto-install popular extensions
 
-### Planned for v2.0
-- [ ] Multi-container support (docker-compose style)
-- [ ] Experiment tracking integration (W&B, MLflow)
-- [ ] GPU scheduling (wait for availability)
-- [ ] Jupyter extensions auto-install
-- [ ] Team dashboard for shared servers
-- [ ] Cloud integration (AWS, GCP, Azure)
+### Planned for v3.0
+- [ ] Cloud Integration - Deploy to AWS, GCP, Azure
+- [ ] Team Features - Shared resource pools, user quotas
+- [ ] Container Snapshots - Save/restore container state
+- [ ] Central Management - Multi-server dashboard
 
 ## Contributing
 
@@ -153,5 +278,5 @@ See [README.md](README.md#contributing) for contribution guidelines.
 
 ## Support
 
-- Issues: [GitHub Issues](https://github.com/your-username/mlenv/issues)
-- Discussions: [GitHub Discussions](https://github.com/your-username/mlenv/discussions)
+- Issues: [GitHub Issues](https://github.com/amrit2356/mlenv/issues)
+- Discussions: [GitHub Discussions](https://github.com/amrit2356/mlenv/discussions)
