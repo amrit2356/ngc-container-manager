@@ -18,12 +18,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y docker.io sqlite3 jq
+          sudo apt-get install -y sqlite3 jq
           
-      - name: Start Docker
-        run: |
-          sudo systemctl start docker
-          sudo docker info
+      - name: Verify Docker
+        run: docker info
       
       - name: Run unit tests
         run: |
@@ -56,7 +54,7 @@ jobs:
           ./packaging/build-deb.sh
       
       - name: Upload DEB artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: mlenv-deb
           path: packaging/*.deb
