@@ -68,6 +68,12 @@ db_query() {
     sqlite3 $format "$MLENV_DB_FILE" "$query"
 }
 
+# Execute SQL statement (alias for db_query with no format)
+db_execute() {
+    local query="$1"
+    db_query "$query" ""
+}
+
 # Execute SQL from file
 db_exec_file() {
     local sql_file="$1"

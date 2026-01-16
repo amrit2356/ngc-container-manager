@@ -47,26 +47,37 @@ catalog_init() {
 catalog_seed_popular() {
     vlog "Seeding popular NGC images..."
     
-    # Popular NVIDIA images (public, no auth needed)
-    local popular_images=(
-        "nvidia:pytorch:PyTorch:GPU-accelerated PyTorch framework"
-        "nvidia:tensorflow:TensorFlow:GPU-accelerated TensorFlow framework"
-        "nvidia:cuda:CUDA:NVIDIA CUDA base images"
-        "nvidia:rapids:RAPIDS:GPU-accelerated data science"
-        "nvidia:tensorrt:TensorRT:High-performance inference"
-        "nvidia:tritonserver:Triton:Inference serving platform"
-        "nvidia:deepstream:DeepStream:Video analytics SDK"
-    )
+    # PyTorch
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'pytorch', 'PyTorch', 'pytorch', 'PyTorch deep learning framework with GPU support'),
+        ('nvidia', NULL, 'l4t-pytorch', 'PyTorch for Jetson', 'pytorch', 'PyTorch optimized for NVIDIA Jetson');"
     
-    for image_spec in "${popular_images[@]}"; do
-        IFS=':' read -r org name display_name description <<< "$image_spec"
-        
-        db_query "INSERT OR IGNORE INTO ngc_images 
-            (organization, name, display_name, category, description, last_synced)
-            VALUES ('$org', '$name', '$display_name', '${name,,}', '$description', datetime('now'));" ""
-    done
+    # TensorFlow
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'tensorflow', 'TensorFlow', 'tensorflow', 'TensorFlow deep learning framework with GPU support'),
+        ('nvidia', NULL, 'l4t-tensorflow', 'TensorFlow for Jetson', 'tensorflow', 'TensorFlow optimized for NVIDIA Jetson');"
     
-    success "Seeded ${#popular_images[@]} popular images"
+    # RAPIDS
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'rapidsai', 'RAPIDS', 'rapids', 'GPU-accelerated data science and analytics');"
+    
+    # CUDA
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'cuda', 'CUDA', 'cuda', 'NVIDIA CUDA Toolkit base image');"
+    
+    # TensorRT
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'tensorrt', 'TensorRT', 'tensorrt', 'High-performance deep learning inference');"
+    
+    # Triton
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'tritonserver', 'Triton Inference Server', 'tritonserver', 'Scalable deep learning inference serving');"
+    
+    # DeepStream
+    db_execute "INSERT OR IGNORE INTO ngc_images (organization, team, name, display_name, category, description) VALUES
+        ('nvidia', NULL, 'deepstream', 'DeepStream SDK', 'deepstream', 'Real-time video analytics SDK');"
+    
+    vlog "Seeded popular NGC images"
 }
 
 # Search images in catalog

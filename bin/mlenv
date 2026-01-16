@@ -246,6 +246,254 @@ cmd_config() {
     esac
 }
 
+cmd_catalog() {
+    # Source catalog module
+    source "${MLENV_LIB}/registry/catalog.sh"
+    
+    local subcmd="${1:-list}"
+    shift || true
+    
+    case "$subcmd" in
+        init)
+            catalog_init
+            ;;
+        search)
+            local query="${1:-}"
+            local category="${2:-}"
+            catalog_search "$query" "$category"
+            ;;
+        list)
+            catalog_list_popular
+            ;;
+        add)
+            if [[ $# -lt 2 ]]; then
+                die "Usage: mlenv catalog add <org> <name> [display_name] [category] [description]"
+            fi
+            catalog_add_image "$@"
+            ;;
+        remove)
+            if [[ $# -lt 2 ]]; then
+                die "Usage: mlenv catalog remove <org> <name>"
+            fi
+            catalog_remove_image "$1" "$2"
+            ;;
+        stats)
+            catalog_stats
+            ;;
+        categories)
+            catalog_list_categories
+            ;;
+        export)
+            local output="${1:-ngc_catalog.json}"
+            catalog_export "$output"
+            ;;
+        import)
+            if [[ -z "$1" ]]; then
+                die "Usage: mlenv catalog import <file>"
+            fi
+            catalog_import "$1"
+            ;;
+        *)
+            echo "Usage: mlenv catalog {init|search|list|add|remove|stats|categories|export|import}"
+            echo ""
+            echo "Commands:"
+            echo "  init                    Initialize catalog database"
+            echo "  search [query] [cat]    Search NGC images (optional category filter)"
+            echo "  list                    List popular images by category"
+            echo "  add <org> <name> ...    Add custom image to catalog"
+            echo "  remove <org> <name>     Remove image from catalog"
+            echo "  stats                   Show catalog statistics"
+            echo "  categories              List all categories"
+            echo "  export [file]           Export catalog to JSON"
+            echo "  import <file>           Import catalog from JSON"
+            ;;
+    esac
+}
+
+cmd_init() {
+    # Source template engine
+    source "${MLENV_LIB}/templates/engine.sh"
+    
+    # Initialize template system
+    template_init
+    
+    # Parse flags
+    local list_templates=false
+    local template_name=""
+    local project_name=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --list|-l)
+                list_templates=true
+                shift
+                ;;
+            --template|-t)
+                template_name="$2"
+                shift 2
+                ;;
+            *)
+                # First non-flag argument is project name
+                if [[ -z "$project_name" ]]; then
+                    project_name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    # Handle --list flag
+    if [[ "$list_templates" == "true" ]]; then
+        template_list
+        return 0
+    fi
+    
+    # Require template name
+    if [[ -z "$template_name" ]]; then
+        echo "Usage: mlenv init --template <template-name> [project-name]"
+        echo ""
+        echo "Options:"
+        echo "  --list, -l              List available templates"
+        echo "  --template <name>, -t   Template name (required)"
+        echo ""
+        echo "Examples:"
+        echo "  mlenv init --list"
+        echo "  mlenv init --template pytorch my-project"
+        echo "  mlenv init --template minimal my-experiment"
+        echo ""
+        echo "Available templates:"
+        template_list
+        return 1
+    fi
+    
+    # Determine project directory and name
+    local project_dir="${project_name:-.}"
+    local final_project_name
+    if [[ -n "$project_name" ]]; then
+        final_project_name="$(basename "$project_name")"
+    else
+        final_project_name="$(basename "$(pwd)")"
+    fi
+    
+    # If project name provided and directory doesn't exist, create it
+    if [[ -n "$project_name" ]] && [[ ! -d "$project_dir" ]]; then
+        info "Creating project directory: $project_dir"
+        mkdir -p "$project_dir" || die "Failed to create directory: $project_dir"
+    fi
+    
+    # Check if directory is empty (unless it's current directory)
+    if [[ "$project_dir" != "." ]] && [[ -d "$project_dir" ]]; then
+        local file_count=$(find "$project_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+        if [[ $file_count -gt 0 ]]; then
+            warn "Directory '$project_dir' is not empty"
+            read -p "Continue anyway? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                info "Cancelled"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Get template path to check if it exists
+    local template_path
+    template_path=$(template_get_path "$template_name")
+    
+    if [[ $? -ne 0 ]]; then
+        error "Template not found: $template_name"
+        echo ""
+        echo "Available templates:"
+        template_list
+        return 1
+    fi
+    
+    # Show template info
+    echo ""
+    info "Template: $template_name"
+    
+    # Try to get template metadata
+    if [[ -f "$template_path/template.yaml" ]]; then
+        local desc=$(grep "^description:" "$template_path/template.yaml" | cut -d: -f2- | xargs)
+        if [[ -n "$desc" ]]; then
+            info "Description: $desc"
+        fi
+        
+        # Check for default image in template
+        local default_image=$(grep "^  image:" "$template_path/template.yaml" | head -1 | cut -d: -f2- | xargs)
+        if [[ -n "$default_image" ]]; then
+            info "Default image: $default_image"
+        fi
+    fi
+    
+    echo ""
+    
+    # Save original directory
+    local orig_dir="$(pwd)"
+    
+    # Apply template (this will cd into project_dir)
+    template_apply "$template_name" "$project_dir" "$final_project_name" || true
+    local apply_result=$?
+    
+    # Return to original directory if template_apply changed it
+    if [[ "$apply_result" -eq 0 ]]; then
+        # template_apply succeeded, now create .mlenvrc in the project directory
+        local abs_project_dir
+        if [[ "$project_dir" = /* ]]; then
+            abs_project_dir="$project_dir"
+        elif [[ "$project_dir" == "." ]]; then
+            abs_project_dir="$orig_dir"
+        else
+            abs_project_dir="$orig_dir/$project_dir"
+        fi
+        
+        # Create .mlenvrc if template has defaults
+        if [[ -f "$template_path/template.yaml" ]]; then
+            local default_image=$(grep "^  image:" "$template_path/template.yaml" | head -1 | cut -d: -f2- | xargs)
+            if [[ -n "$default_image" ]]; then
+                local mlenvrc="$abs_project_dir/.mlenvrc"
+                if [[ ! -f "$mlenvrc" ]]; then
+                    vlog "Creating .mlenvrc with template defaults..."
+                    {
+                        echo "# MLEnv Configuration"
+                        echo "# Generated from template: $template_name"
+                        echo ""
+                        echo "DEFAULT_IMAGE=$default_image"
+                        
+                        # Extract ports if available
+                        local ports=$(grep "^    - " "$template_path/template.yaml" | grep -E "[0-9]+:[0-9]+" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//' | xargs)
+                        if [[ -n "$ports" ]]; then
+                            echo "DEFAULT_PORTS=$ports"
+                        fi
+                        
+                        # Extract GPU devices if available
+                        local gpu_devices=$(grep "^  gpu_devices:" "$template_path/template.yaml" | cut -d: -f2- | xargs)
+                        if [[ -n "$gpu_devices" ]]; then
+                            echo "DEFAULT_GPUS=$gpu_devices"
+                        fi
+                    } > "$mlenvrc"
+                    success "Created .mlenvrc"
+                fi
+            fi
+        fi
+        
+        echo ""
+        success "Project initialized successfully!"
+        echo ""
+        info "Next steps:"
+        if [[ "$project_dir" != "." ]]; then
+            echo "  cd $project_dir"
+        fi
+        echo "  mlenv up"
+        echo "  mlenv exec"
+        
+        # Return to original directory
+        cd "$orig_dir" || true
+    else
+        die "Template apply failed"
+    fi
+}
+
 cmd_version() {
     echo "MLEnv - ML Environment Manager v${VERSION}"
     echo ""
@@ -262,6 +510,8 @@ USAGE:
 COMMANDS:
   login       Authenticate with NGC
   logout      Remove NGC authentication
+  catalog     Browse and manage NGC image catalog
+  init        Initialize project from template
   up          Create/start container
   exec        Open interactive shell (or run command with -c)
   down        Stop container
@@ -278,6 +528,22 @@ CONFIG COMMANDS:
   mlenv config get <key>       Get config value
   mlenv config set <key> <val> Set config value
   mlenv config generate        Generate ~/.mlenvrc
+
+CATALOG COMMANDS:
+  mlenv catalog list           List popular NGC images by category
+  mlenv catalog search <query> Search for NGC images
+  mlenv catalog stats          Show catalog statistics
+  mlenv catalog add <org> <name>      Add custom image
+  mlenv catalog remove <org> <name>   Remove image
+
+INIT COMMANDS:
+  mlenv init --list                      List available templates
+  mlenv init --template <name> [dir]     Create project from template
+  
+  Examples:
+    mlenv init --list
+    mlenv init --template pytorch my-project
+    mlenv init --template minimal my-experiment
 
 OPTIONS (for 'up' command):
   --image <name>              Docker image
@@ -353,6 +619,9 @@ install_requirements() {
 command="${1:-help}"
 shift || true
 
+# Store remaining arguments for commands
+declare -a CMD_ARGS=()
+
 # Parse options before initializing engine
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -402,13 +671,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
+            # Save non-option arguments for the command
+            CMD_ARGS+=("$1")
             shift
             ;;
     esac
 done
-
-# Initialize engine
-engine_init
 
 # Override config with command-line options
 [[ -n "$IMAGE" ]] && MLENV_DEFAULT_IMAGE="$IMAGE"
@@ -421,18 +689,29 @@ engine_init
 
 # Execute command
 case "$command" in
-    login)    cmd_login ;;
-    logout)   cmd_logout ;;
-    up)       cmd_up ;;
-    exec)     cmd_exec ;;
-    down)     cmd_down ;;
-    restart)  cmd_restart ;;
-    rm)       cmd_rm ;;
-    logs)     cmd_logs ;;
-    status)   cmd_status ;;
-    config)   cmd_config "$@" ;;
+    # Commands that don't need full engine initialization
+    init)     cmd_init "${CMD_ARGS[@]}" ;;
+    catalog)  cmd_catalog "${CMD_ARGS[@]}" ;;
+    config)   cmd_config "${CMD_ARGS[@]}" ;;
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
+    
+    # Commands that need full engine initialization
+    login|logout|up|exec|down|restart|rm|logs|status|jupyter)
+        engine_init
+        case "$command" in
+            login)    cmd_login ;;
+            logout)   cmd_logout ;;
+            up)       cmd_up ;;
+            exec)     cmd_exec ;;
+            down)     cmd_down ;;
+            restart)  cmd_restart ;;
+            rm)       cmd_rm ;;
+            logs)     cmd_logs ;;
+            status)   cmd_status ;;
+            jupyter)  cmd_jupyter ;;
+        esac
+        ;;
     *)
         die "Unknown command: $command. Use 'mlenv help' for usage."
         ;;
