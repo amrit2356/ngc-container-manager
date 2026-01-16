@@ -68,7 +68,7 @@ config_load_hierarchy() {
     if [[ -f "/etc/mlenv/mlenv.conf" ]]; then
         if config_parse_file "/etc/mlenv/mlenv.conf"; then
             vlog "  ✓ System config loaded"
-            ((config_count++))
+            (( config_count++ )) || true
         fi
     fi
     
@@ -76,7 +76,7 @@ config_load_hierarchy() {
     if [[ -f "$HOME/.mlenvrc" ]]; then
         if config_parse_file "$HOME/.mlenvrc"; then
             vlog "  ✓ User config loaded"
-            ((config_count++))
+            (( config_count++ )) || true
         fi
     fi
     
@@ -84,7 +84,7 @@ config_load_hierarchy() {
     if [[ -f ".mlenv/config" ]]; then
         if config_parse_file ".mlenv/config"; then
             vlog "  ✓ Project config loaded"
-            ((config_count++))
+            (( config_count++ )) || true
         fi
     fi
     

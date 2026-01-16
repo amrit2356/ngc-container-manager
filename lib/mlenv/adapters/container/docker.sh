@@ -57,8 +57,43 @@ docker_container_exec() {
     local name="$1"
     shift
     
+    # Separate options from command
+    # Docker exec format: docker exec [OPTIONS] CONTAINER COMMAND [ARG...]
+    local options=()
+    local command=()
+    local in_command=false
+    local expect_option_value=false
+    
+    # Options that take a value
+    local value_options=("-u" "--user" "-e" "--env" "-w" "--workdir")
+    
+    for arg in "$@"; do
+        if [[ "$in_command" == "true" ]]; then
+            # Already in command, everything goes to command
+            command+=("$arg")
+        elif [[ "$expect_option_value" == "true" ]]; then
+            # This is a value for the previous option
+            options+=("$arg")
+            expect_option_value=false
+        elif [[ "$arg" =~ ^- ]]; then
+            # This is an option
+            options+=("$arg")
+            # Check if this option expects a value
+            for opt in "${value_options[@]}"; do
+                if [[ "$arg" == "$opt" ]]; then
+                    expect_option_value=true
+                    break
+                fi
+            done
+        else
+            # Not an option, not expecting an option value -> this is the command
+            in_command=true
+            command+=("$arg")
+        fi
+    done
+    
     vlog "[Docker] Executing in container: $name"
-    docker exec "$name" "$@"
+    docker exec "${options[@]}" "$name" "${command[@]}"
 }
 
 # Inspect container

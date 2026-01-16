@@ -8,7 +8,7 @@
 
 **Production-Grade GPU Container Management Platform**
 
-MLEnv is an enterprise-grade command-line tool for managing NVIDIA GPU-accelerated Docker containers for deep learning and scientific computing. Built with hexagonal architecture, featuring intelligent GPU allocation, crash prevention, and professional packaging.
+MLEnv is a production-grade environment manager designed to eliminate setup complexity in machine learning and AI development. It provides safe, reproducible, GPU-ready development environments so engineers and researchers can focus on building, experimenting, and deploying AI systems — not debugging CUDA, drivers, or containers. If it runs in MLEnv, it can be trusted in production.
 
 📖 **[Full Documentation](docs/index.md)** | 🚀 **[Getting Started](docs/guides/getting-started.md)** | 📦 **[Deployment Guide](docs/guides/deployment.md)**
 

@@ -55,20 +55,477 @@ EXEC_CMD=""
 
 mkdir -p "$LOG_DIR"
 
-# ============================================================================
-# LOAD CORE LIBRARIES
-# ============================================================================
+# Set log file for engine
+export MLENV_LOG_FILE="$LOG_FILE"
+export MLENV_LOG_DIR="$LOG_DIR"
 
-# Core engine (logging, config, etc.)
-source "${MLENV_LIB}/core/engine.sh"
+# Commands implementation using new engine
+
+cmd_up() {
+    check_requirements_file
+    
+    # Check NGC authentication if needed
+    if [[ -n "$IMAGE" ]] && [[ "$IMAGE" == *"nvcr.io"* ]] && [[ "$IMAGE" != *"/nvidia/"* ]]; then
+        if ! ngc_auth_registry_is_authenticated; then
+            error "Private NGC image requires authentication"
+            info "Run: mlenv login"
+            return 1
+        fi
+    fi
+    
+    vlog "Configuration:"
+    vlog "  Image: ${IMAGE:-$MLENV_DEFAULT_IMAGE}"
+    vlog "  Container: $CONTAINER_NAME"
+    vlog "  Workdir: $WORKDIR"
+    vlog "  GPUs: ${GPU_DEVICES:-$MLENV_GPU_DEVICES}"
+    
+    local status=$(container_get_status "$CONTAINER_NAME")
+    
+    case "$status" in
+        running)
+            info "Container already running"
+            ;;
+        stopped)
+            log "▶ Starting existing container"
+            container_start "$CONTAINER_NAME"
+            success "Container started"
+            ;;
+        absent)
+            local image="${IMAGE:-$MLENV_DEFAULT_IMAGE}"
+            
+            # Pull image if needed
+            if ! image_exists "$image"; then
+                image_pull "$image"
+            fi
+            
+            # Create init script if running as user
+            if [[ "$RUN_AS_USER" == "true" ]]; then
+                container_create_init_script "$LOG_DIR"
+            fi
+            
+            # Create devcontainer config
+            if [[ "$(config_get 'devcontainer.auto_generate' 'true')" == "true" ]]; then
+                devcontainer_create_config "$WORKDIR"
+            fi
+            
+            log "▶ Creating container: $CONTAINER_NAME"
+            
+            # Build container args
+            readarray -t container_args < <(container_build_run_args "$CONTAINER_NAME" "$image" "$WORKDIR")
+            
+            # Create container via adapter
+            if container_create "$CONTAINER_NAME" "${container_args[@]}"; then
+                success "Container created and started"
+            else
+                die "Failed to create container. Check logs: mlenv logs"
+            fi
+            ;;
+    esac
+    
+    # Wait for container to be ready
+    sleep 1
+    
+    # Install requirements if specified
+    install_requirements
+    
+    success "Environment ready"
+    if [[ -n "$PORTS" ]]; then
+        info "Ports forwarded: $PORTS"
+    fi
+    info "Enter with: mlenv exec"
+}
+
+cmd_exec() {
+    if ! container_is_running "$CONTAINER_NAME"; then
+        die "Container not running. Start with: mlenv up"
+    fi
+    
+    local exec_args=()
+    exec_args+=("-it")
+    
+    # Determine user for exec
+    if [[ "$RUN_AS_USER" == "true" ]]; then
+        exec_args+=("--user" "$(id -u):$(id -g)")
+    fi
+    
+    if [[ -n "$EXEC_CMD" ]]; then
+        # Execute specific command
+        vlog "Executing command: $EXEC_CMD"
+        exec_args+=("bash" "-c" "$EXEC_CMD")
+        container_exec "$CONTAINER_NAME" "${exec_args[@]}"
+    else
+        # Interactive bash
+        exec_args+=("bash")
+        container_exec "$CONTAINER_NAME" "${exec_args[@]}"
+    fi
+}
+
+cmd_down() {
+    if container_is_running "$CONTAINER_NAME"; then
+        log "■ Stopping container"
+        container_stop "$CONTAINER_NAME"
+        success "Container stopped"
+    else
+        info "Container not running"
+    fi
+}
+
+cmd_rm() {
+    if container_exists "$CONTAINER_NAME"; then
+        log "✖ Removing container (your code on host is safe)"
+        container_remove "$CONTAINER_NAME"
+        
+        # Clean up markers and init script
+        rm -f "$REQUIREMENTS_MARKER"
+        rm -f "${LOG_DIR}/init.sh"
+        
+        success "Container removed"
+    else
+        info "Container does not exist"
+    fi
+}
+
+cmd_restart() {
+    cmd_down
+    sleep 1
+    cmd_up
+}
+
+cmd_logs() {
+    if [[ -f "$LOG_FILE" ]]; then
+        cat "$LOG_FILE"
+    else
+        info "No logs found"
+    fi
+}
+
+cmd_status() {
+    local status=$(container_get_status "$CONTAINER_NAME")
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Container: $CONTAINER_NAME"
+    echo "Status: $status"
+    echo "Workdir: $WORKDIR"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if container_exists "$CONTAINER_NAME"; then
+        echo ""
+        container_list "name=${CONTAINER_NAME}"
+    fi
+}
+
+cmd_login() {
+    ngc_auth_registry_login ""
+}
+
+cmd_logout() {
+    ngc_auth_registry_logout
+}
+
+# Port detection helpers
+get_forwarded_ports() {
+    # Get all forwarded ports for the container
+    # Returns format: "host_port:container_port" one per line
+    container_get_forwarded_ports "$CONTAINER_NAME" 2>/dev/null || true
+}
+
+find_jupyter_port() {
+    # Try to find a suitable port for Jupyter from forwarded ports
+    # Priority: 8888, then 8889-8899, then first available in forwarded range
+    local forwarded_ports
+    forwarded_ports=$(get_forwarded_ports)
+    
+    if [[ -z "$forwarded_ports" ]]; then
+        echo ""
+        return 1
+    fi
+    
+    # Check for 8888 first
+    if echo "$forwarded_ports" | grep -q ":8888$"; then
+        echo "8888"
+        return 0
+    fi
+    
+    # Check for 8889-8899
+    for port in {8889..8899}; do
+        if echo "$forwarded_ports" | grep -q ":${port}$"; then
+            echo "$port"
+            return 0
+        fi
+    done
+    
+    # Return first forwarded port in the range
+    local first_port
+    first_port=$(echo "$forwarded_ports" | grep -E ":[0-9]+$" | head -1 | cut -d: -f2)
+    if [[ -n "$first_port" ]]; then
+        echo "$first_port"
+        return 0
+    fi
+    
+    echo ""
+    return 1
+}
+
+cmd_jupyter() {
+    # Determine which port to use (default to 8888 if not specified)
+    local container_port="${JUPYTER_PORT:-8888}"
+    local default_ports="${container_port}:${container_port}"
+    local host_port=""
+    
+    # Check container status
+    local status=$(container_get_status "$CONTAINER_NAME")
+    
+    case "$status" in
+        absent)
+            # Container doesn't exist - create it with port forwarding
+            log "▶ Container not found. Creating with Jupyter port forwarding..."
+            
+            # Auto-detect requirements.txt if it exists and wasn't specified
+            if [[ -z "$REQUIREMENTS_PATH" ]] && [[ -f "$WORKDIR/requirements.txt" ]]; then
+                REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+                info "Auto-detected requirements.txt"
+            fi
+            
+            # Set default port forwarding if not already set
+            if [[ -z "$PORTS" ]]; then
+                PORTS="$default_ports"
+                info "Using default port forwarding: $PORTS"
+            fi
+            
+            # Export for container creation
+            export MLENV_PORTS="$PORTS"
+            
+            # Create and start the container
+            cmd_up
+            ;;
+            
+        stopped|running)
+            # Container exists - check if it has proper port forwarding
+            vlog "Checking port forwarding on existing container..."
+            
+            # Check if the container has the required port forwarding
+            local has_port=false
+            local existing_ports
+            existing_ports=$(get_forwarded_ports)
+            
+            if [[ -n "$existing_ports" ]]; then
+                # Check if our target port is in there
+                if echo "$existing_ports" | grep -q ":${container_port}$"; then
+                    has_port=true
+                fi
+            fi
+            
+            if [[ "$has_port" == "false" ]]; then
+                # Container exists but doesn't have the required port
+                echo ""
+                warn "Container exists but port $container_port is not forwarded"
+                info "Docker doesn't allow adding ports to existing containers"
+                info "Recreating container with port forwarding: $default_ports"
+                echo ""
+                
+                # Auto-detect requirements.txt if it exists and wasn't specified
+                if [[ -z "$REQUIREMENTS_PATH" ]] && [[ -f "$WORKDIR/requirements.txt" ]]; then
+                    REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+                    info "Auto-detected requirements.txt for recreation"
+                fi
+                
+                # Remove the old container
+                log "▶ Removing old container..."
+                cmd_rm
+                
+                # Set port forwarding for recreation
+                if [[ -z "$PORTS" ]]; then
+                    PORTS="$default_ports"
+                fi
+                
+                # Export for container creation
+                export MLENV_PORTS="$PORTS"
+                
+                # Recreate with port forwarding
+                log "▶ Creating new container with port forwarding..."
+                cmd_up
+                # Give container a moment to fully initialize
+                sleep 2
+            else
+                # Port is forwarded, just ensure container is running
+                if [[ "$status" == "stopped" ]]; then
+                    log "▶ Starting existing container"
+                    container_start "$CONTAINER_NAME"
+                    success "Container started"
+                    sleep 1
+                else
+                    vlog "Container already running with proper port forwarding"
+                fi
+            fi
+            ;;
+    esac
+    
+    # Give container a moment to be ready if it was just created
+    vlog "Waiting for container to be fully ready..."
+    sleep 1
+    
+    # Now container is running with proper ports - find the host port
+    if [[ -z "$JUPYTER_PORT" ]]; then
+        # Try to auto-detect a suitable port from forwarded ports
+        local detected_port
+        detected_port=$(find_jupyter_port) || true
+        
+        if [[ -n "$detected_port" ]]; then
+            container_port="$detected_port"
+            vlog "Auto-detected container port: $container_port"
+        else
+            # Fallback: use default port we set earlier
+            container_port="8888"
+            vlog "Using default port: $container_port"
+        fi
+    fi
+    
+    # Find the corresponding host port
+    local all_ports
+    all_ports=$(get_forwarded_ports)
+    host_port=$(echo "$all_ports" | grep ":${container_port}$" | cut -d: -f1 | head -1) || true
+    
+    if [[ -z "$host_port" ]]; then
+        die "Failed to detect host port mapping for container port $container_port. Available ports: $all_ports"
+    fi
+    
+    log "▶ Starting Jupyter Lab on container port $container_port"
+    
+    # Show access info
+    echo ""
+    success "Jupyter will be accessible at: http://localhost:$host_port"
+    info "Token will be shown below..."
+    echo ""
+    
+    # Build exec args
+    local exec_args=("-it")
+    
+    if [[ "$RUN_AS_USER" == "true" ]]; then
+        exec_args+=("--user" "$(id -u):$(id -g)")
+    fi
+    
+    exec_args+=("bash" "-c" "jupyter lab --ip=0.0.0.0 --port=$container_port --no-browser --allow-root")
+    
+    container_exec "$CONTAINER_NAME" "${exec_args[@]}"
+}
+
+cmd_config() {
+    local subcmd="${1:-show}"
+    shift || true
+    
+    case "$subcmd" in
+        show)
+            config_show
+            ;;
+        get)
+            local key="$1"
+            config_get "$key"
+            ;;
+        set)
+            local key="$1"
+            local value="$2"
+            config_set "$key" "$value"
+            success "Set $key = $value"
+            ;;
+        generate)
+            local output="${1:-$HOME/.mlenvrc}"
+            config_save "$output"
+            ;;
+        *)
+            echo "Usage: mlenv config {show|get|set|generate}"
+            ;;
+    esac
+}
+
+cmd_version() {
+    echo "MLEnv - ML Environment Manager v${VERSION}"
+    echo ""
+    engine_get_info
+}
+
+cmd_help() {
+    cat <<EOF
+MLEnv - ML Environment Manager v${VERSION}
+
+USAGE:
+  mlenv <command> [options]
+
+COMMANDS:
+  login       Authenticate with NGC
+  logout      Remove NGC authentication
+  up          Create/start container
+  exec        Open interactive shell (or run command with -c)
+  down        Stop container
+  restart     Restart container
+  rm          Remove container (keeps your code safe)
+  status      Show container status
+  jupyter     Start Jupyter Lab (auto-detects ports)
+  logs        View debug logs
+  config      Manage configuration
+  version     Show version information
+  help        Show this help
+
+CONFIG COMMANDS:
+  mlenv config show            Show current configuration
+  mlenv config get <key>       Get config value
+  mlenv config set <key> <val> Set config value
+  mlenv config generate        Generate ~/.mlenvrc
+
+OPTIONS (for 'up' command):
+  --image <name>              Docker image
+  --requirements <path>       Install Python requirements from file
+  --force-requirements        Force reinstall requirements
+  --port <mapping>            Port forwarding (e.g., "8888:8888,6006:6006")
+  --gpu <devices>             GPU devices (e.g., "0,1" or "all")
+  --env-file <path>           Environment variables file
+  --memory <limit>            Memory limit (e.g., "16g")
+  --cpus <limit>              CPU limit (e.g., "4.0")
+  --no-user-mapping           Run as root instead of current user
+  --verbose                   Enable verbose output
+
+OPTIONS (for 'exec' command):
+  -c <command>                Execute command instead of interactive shell
+
+OPTIONS (for 'jupyter' command):
+  --port <port>               Port to run Jupyter on (default: auto-detect)
+
+EXAMPLES:
+  # Basic setup
+  mlenv up
+  mlenv exec
 
 # Utility functions (only if they exist - some may be in core)
 [[ -f "${MLENV_LIB}/utils/port-utils.sh" ]] && source "${MLENV_LIB}/utils/port-utils.sh"
 [[ -f "${MLENV_LIB}/utils/container-utils.sh" ]] && source "${MLENV_LIB}/utils/container-utils.sh"
 
-# ============================================================================
-# LOAD COMMAND IMPLEMENTATIONS
-# ============================================================================
+  # Full setup with Jupyter (auto-detects port 8888)
+  mlenv up --requirements requirements.txt --port 8888:8888,6006:6006
+  mlenv jupyter
+  # Access at: http://localhost:8888
+
+  # Jupyter on custom port
+  mlenv up --port 8889:8889
+  mlenv jupyter
+  # Access at: http://localhost:8889
+
+  # Multiple Jupyter instances on same container
+  mlenv up --port 8888:8888,8889:8889,8890:8890
+  mlenv jupyter --port 8888    # Terminal 1 → http://localhost:8888
+  mlenv jupyter --port 8889    # Terminal 2 → http://localhost:8889
+
+  # Run specific command
+  mlenv exec -c "python train.py --epochs 10"
+  
+PORT FORWARDING NOTES:
+  • Port forwarding must be set during container creation (mlenv up --port)
+  • Format: "host_port:container_port" (e.g., "8888:8888")
+  • mlenv jupyter automatically detects forwarded ports
+  • Priority: 8888 → 8889-8899 → first available
+  • Check current forwarding with: mlenv status
+  
+For more information: https://github.com/your-username/mlenv
+EOF
+}
 
 # Load all command modules
 if [[ -d "${MLENV_LIB}/commands" ]]; then
@@ -104,6 +561,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --port)
+            # Handle both --port for 'up' and 'jupyter' commands
             if [[ "$command" == "jupyter" ]]; then
                 JUPYTER_PORT="$2"
             else
@@ -212,12 +670,8 @@ case "$command" in
     
     # Information
     status)   cmd_status ;;
-    logs)     cmd_logs ;;
-    
-    # Maintenance
-    clean)    cmd_clean "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
-    
-    # Help & Version
+    jupyter)  cmd_jupyter ;;
+    config)   cmd_config "$@" ;;
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
     

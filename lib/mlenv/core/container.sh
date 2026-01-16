@@ -51,18 +51,18 @@ container_build_run_args() {
     args+=("--ulimit" "stack=67108864")
     
     # Resource limits
-    if [[ -n "$MLENV_MEMORY_LIMIT" ]]; then
+    if [[ -n "${MLENV_MEMORY_LIMIT:-}" ]]; then
         args+=("--memory" "$MLENV_MEMORY_LIMIT")
         vlog "Memory limit: $MLENV_MEMORY_LIMIT"
     fi
     
-    if [[ -n "$MLENV_CPU_LIMIT" ]]; then
+    if [[ -n "${MLENV_CPU_LIMIT:-}" ]]; then
         args+=("--cpus" "$MLENV_CPU_LIMIT")
         vlog "CPU limit: $MLENV_CPU_LIMIT"
     fi
     
     # Port forwarding
-    if [[ -n "$MLENV_PORTS" ]]; then
+    if [[ -n "${MLENV_PORTS:-}" ]]; then
         IFS=',' read -ra PORT_ARRAY <<< "$MLENV_PORTS"
         for port in "${PORT_ARRAY[@]}"; do
             args+=("-p" "$port")
@@ -71,7 +71,7 @@ container_build_run_args() {
     fi
     
     # Environment file
-    if [[ -n "$MLENV_ENV_FILE" && -f "$MLENV_ENV_FILE" ]]; then
+    if [[ -n "${MLENV_ENV_FILE:-}" ]] && [[ -f "$MLENV_ENV_FILE" ]]; then
         args+=("--env-file" "$MLENV_ENV_FILE")
         vlog "Using env file: $MLENV_ENV_FILE"
     fi

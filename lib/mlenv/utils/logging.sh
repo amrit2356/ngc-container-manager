@@ -49,7 +49,8 @@ _log() {
 log() {
     local message="$1"
     if should_log "info"; then
-        echo "$message" | tee -a "${MLENV_LOG_FILE:-/dev/null}"
+        echo "$message"
+        [[ -n "$MLENV_LOG_FILE" ]] && echo "$message" >> "$MLENV_LOG_FILE" || true
     fi
 }
 
@@ -60,35 +61,38 @@ vlog() {
     if [[ "$MLENV_VERBOSE" = true ]] && should_log "debug"; then
         echo "$formatted" >&2
     elif [[ -n "$MLENV_LOG_FILE" ]]; then
-        echo "$formatted" >> "$MLENV_LOG_FILE"
+        echo "$formatted" >> "$MLENV_LOG_FILE" || true
     fi
 }
 
 info() {
     local message="$1"
     if should_log "info"; then
-        echo "ℹ $message" | tee -a "${MLENV_LOG_FILE:-/dev/null}"
+        echo "ℹ $message"
+        [[ -n "$MLENV_LOG_FILE" ]] && echo "ℹ $message" >> "$MLENV_LOG_FILE" || true
     fi
 }
 
 success() {
     local message="$1"
     if should_log "info"; then
-        echo "✔ $message" | tee -a "${MLENV_LOG_FILE:-/dev/null}"
+        echo "✔ $message"
+        [[ -n "$MLENV_LOG_FILE" ]] && echo "✔ $message" >> "$MLENV_LOG_FILE" || true
     fi
 }
 
 warn() {
     local message="$1"
     if should_log "warn"; then
-        echo "⚠ $message" | tee -a "${MLENV_LOG_FILE:-/dev/null}" >&2
+        echo "⚠ $message" >&2
+        [[ -n "$MLENV_LOG_FILE" ]] && echo "⚠ $message" >> "$MLENV_LOG_FILE" || true
     fi
 }
 
 error() {
     local message="$1"
     _log "ERROR" "$message"
-    echo "✖ $message" | tee -a "${MLENV_LOG_FILE:-/dev/null}" >&2
+    echo "✖ $message" >&2
 }
 
 # Set log level
