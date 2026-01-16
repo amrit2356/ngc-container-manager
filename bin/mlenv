@@ -171,7 +171,7 @@ done
 
 # Initialize engine for commands that need it
 case "$command" in
-    init|catalog|config|version|--version|-v|help|--help|-h)
+    init|catalog|config|clean|version|--version|-v|help|--help|-h)
         # Skip engine init for these lightweight commands
         ;;
     *)
@@ -213,6 +213,11 @@ case "$command" in
     # Information
     status)   cmd_status ;;
     logs)     cmd_logs ;;
+    
+    # Maintenance
+    clean)    cmd_clean "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    
+    # Help & Version
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
     
