@@ -56,10 +56,9 @@ docker_container_remove() {
 docker_container_exec() {
     local name="$1"
     shift
-    local args=("$@")
     
     vlog "[Docker] Executing in container: $name"
-    docker exec "${args[@]}" "$name"
+    docker exec "$name" "$@"
 }
 
 # Inspect container

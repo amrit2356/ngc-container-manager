@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# MLEnv - ML Environment Manager (Modular Version)
+# MLEnv - ML Environment Manager (Refactored)
 # Version: 2.0.0
+# This file contains only command routing - all implementation is in lib/mlenv/
 
 set -euo pipefail
+
+# ============================================================================
+# ENVIRONMENT SETUP
+# ============================================================================
 
 # Detect installation location
 if [[ -f "/usr/local/lib/mlenv/core/engine.sh" ]]; then
@@ -17,14 +22,14 @@ fi
 
 # Verify library exists
 if [[ ! -d "$MLENV_LIB" ]]; then
-    echo "Error: MLEnv library not found at: $MLENV_LIB"
+    echo "Error: MLEnv library not found at: $MLENV_LIB" >&2
     exit 1
 fi
 
-# Initialize engine
-source "${MLENV_LIB}/core/engine.sh"
+# ============================================================================
+# GLOBAL VARIABLES
+# ============================================================================
 
-# Global variables (from original script)
 VERSION="2.0.0"
 WORKDIR="$(pwd)"
 PROJECT_NAME="$(basename "$WORKDIR")"
@@ -34,7 +39,7 @@ LOG_DIR="$WORKDIR/.mlenv"
 LOG_FILE="$LOG_DIR/mlenv.log"
 REQUIREMENTS_MARKER="$LOG_DIR/.requirements_installed"
 
-# Command-line options (will be overridden by config)
+# Command-line options (will be populated by option parser)
 IMAGE=""
 REQUIREMENTS_PATH=""
 FORCE_REQUIREMENTS=false
@@ -48,572 +53,33 @@ CPU_LIMIT=""
 RUN_AS_USER=true
 EXEC_CMD=""
 
-# Create log directory
 mkdir -p "$LOG_DIR"
 
-# Set log file for engine
-export MLENV_LOG_FILE="$LOG_FILE"
-export MLENV_LOG_DIR="$LOG_DIR"
+# ============================================================================
+# LOAD CORE LIBRARIES
+# ============================================================================
 
-# Commands implementation using new engine
+# Core engine (logging, config, etc.)
+source "${MLENV_LIB}/core/engine.sh"
 
-cmd_up() {
-    check_requirements_file
-    
-    # Check NGC authentication if needed
-    if [[ -n "$IMAGE" ]] && [[ "$IMAGE" == *"nvcr.io"* ]] && [[ "$IMAGE" != *"/nvidia/"* ]]; then
-        if ! ngc_auth_registry_is_authenticated; then
-            error "Private NGC image requires authentication"
-            info "Run: mlenv login"
-            return 1
-        fi
-    fi
-    
-    vlog "Configuration:"
-    vlog "  Image: ${IMAGE:-$MLENV_DEFAULT_IMAGE}"
-    vlog "  Container: $CONTAINER_NAME"
-    vlog "  Workdir: $WORKDIR"
-    vlog "  GPUs: ${GPU_DEVICES:-$MLENV_GPU_DEVICES}"
-    
-    local status=$(container_get_status "$CONTAINER_NAME")
-    
-    case "$status" in
-        running)
-            info "Container already running"
-            ;;
-        stopped)
-            log "▶ Starting existing container"
-            container_start "$CONTAINER_NAME"
-            success "Container started"
-            ;;
-        absent)
-            local image="${IMAGE:-$MLENV_DEFAULT_IMAGE}"
-            
-            # Pull image if needed
-            if ! image_exists "$image"; then
-                image_pull "$image"
-            fi
-            
-            # Create init script if running as user
-            if [[ "$RUN_AS_USER" == "true" ]]; then
-                container_create_init_script "$LOG_DIR"
-            fi
-            
-            # Create devcontainer config
-            if [[ "$(config_get 'devcontainer.auto_generate' 'true')" == "true" ]]; then
-                devcontainer_create_config "$WORKDIR"
-            fi
-            
-            log "▶ Creating container: $CONTAINER_NAME"
-            
-            # Build container args
-            readarray -t container_args < <(container_build_run_args "$CONTAINER_NAME" "$image" "$WORKDIR")
-            
-            # Create container via adapter
-            if container_create "$CONTAINER_NAME" "${container_args[@]}"; then
-                success "Container created and started"
-            else
-                die "Failed to create container. Check logs: mlenv logs"
-            fi
-            ;;
-    esac
-    
-    # Wait for container to be ready
-    sleep 1
-    
-    # Install requirements if specified
-    install_requirements
-    
-    success "Environment ready"
-    if [[ -n "$PORTS" ]]; then
-        info "Ports forwarded: $PORTS"
-    fi
-    info "Enter with: mlenv exec"
-}
+# Utility functions (only if they exist - some may be in core)
+[[ -f "${MLENV_LIB}/utils/port-utils.sh" ]] && source "${MLENV_LIB}/utils/port-utils.sh"
+[[ -f "${MLENV_LIB}/utils/container-utils.sh" ]] && source "${MLENV_LIB}/utils/container-utils.sh"
 
-cmd_exec() {
-    if ! container_is_running "$CONTAINER_NAME"; then
-        die "Container not running. Start with: mlenv up"
-    fi
-    
-    local exec_args=()
-    exec_args+=("-it")
-    
-    # Determine user for exec
-    if [[ "$RUN_AS_USER" == "true" ]]; then
-        exec_args+=("--user" "$(id -u):$(id -g)")
-    fi
-    
-    if [[ -n "$EXEC_CMD" ]]; then
-        # Execute specific command
-        vlog "Executing command: $EXEC_CMD"
-        exec_args+=("bash" "-c" "$EXEC_CMD")
-        container_exec "$CONTAINER_NAME" "${exec_args[@]}"
-    else
-        # Interactive bash
-        exec_args+=("bash")
-        container_exec "$CONTAINER_NAME" "${exec_args[@]}"
-    fi
-}
+# ============================================================================
+# LOAD COMMAND IMPLEMENTATIONS
+# ============================================================================
 
-cmd_down() {
-    if container_is_running "$CONTAINER_NAME"; then
-        log "■ Stopping container"
-        container_stop "$CONTAINER_NAME"
-        success "Container stopped"
-    else
-        info "Container not running"
-    fi
-}
-
-cmd_rm() {
-    if container_exists "$CONTAINER_NAME"; then
-        log "✖ Removing container (your code on host is safe)"
-        container_remove "$CONTAINER_NAME"
-        
-        # Clean up markers and init script
-        rm -f "$REQUIREMENTS_MARKER"
-        rm -f "${LOG_DIR}/init.sh"
-        
-        success "Container removed"
-    else
-        info "Container does not exist"
-    fi
-}
-
-cmd_restart() {
-    cmd_down
-    sleep 1
-    cmd_up
-}
-
-cmd_logs() {
-    if [[ -f "$LOG_FILE" ]]; then
-        cat "$LOG_FILE"
-    else
-        info "No logs found"
-    fi
-}
-
-cmd_status() {
-    local status=$(container_get_status "$CONTAINER_NAME")
-    
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "Container: $CONTAINER_NAME"
-    echo "Status: $status"
-    echo "Workdir: $WORKDIR"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    if container_exists "$CONTAINER_NAME"; then
-        echo ""
-        container_list "name=${CONTAINER_NAME}"
-    fi
-}
-
-cmd_login() {
-    ngc_auth_registry_login ""
-}
-
-cmd_logout() {
-    ngc_auth_registry_logout
-}
-
-cmd_config() {
-    local subcmd="${1:-show}"
-    shift || true
-    
-    case "$subcmd" in
-        show)
-            config_show
-            ;;
-        get)
-            local key="$1"
-            config_get "$key"
-            ;;
-        set)
-            local key="$1"
-            local value="$2"
-            config_set "$key" "$value"
-            success "Set $key = $value"
-            ;;
-        generate)
-            local output="${1:-$HOME/.mlenvrc}"
-            config_save "$output"
-            ;;
-        *)
-            echo "Usage: mlenv config {show|get|set|generate}"
-            ;;
-    esac
-}
-
-cmd_catalog() {
-    # Source catalog module
-    source "${MLENV_LIB}/registry/catalog.sh"
-    
-    local subcmd="${1:-list}"
-    shift || true
-    
-    case "$subcmd" in
-        init)
-            catalog_init
-            ;;
-        search)
-            local query="${1:-}"
-            local category="${2:-}"
-            catalog_search "$query" "$category"
-            ;;
-        list)
-            catalog_list_popular
-            ;;
-        add)
-            if [[ $# -lt 2 ]]; then
-                die "Usage: mlenv catalog add <org> <name> [display_name] [category] [description]"
-            fi
-            catalog_add_image "$@"
-            ;;
-        remove)
-            if [[ $# -lt 2 ]]; then
-                die "Usage: mlenv catalog remove <org> <name>"
-            fi
-            catalog_remove_image "$1" "$2"
-            ;;
-        stats)
-            catalog_stats
-            ;;
-        categories)
-            catalog_list_categories
-            ;;
-        export)
-            local output="${1:-ngc_catalog.json}"
-            catalog_export "$output"
-            ;;
-        import)
-            if [[ -z "$1" ]]; then
-                die "Usage: mlenv catalog import <file>"
-            fi
-            catalog_import "$1"
-            ;;
-        *)
-            echo "Usage: mlenv catalog {init|search|list|add|remove|stats|categories|export|import}"
-            echo ""
-            echo "Commands:"
-            echo "  init                    Initialize catalog database"
-            echo "  search [query] [cat]    Search NGC images (optional category filter)"
-            echo "  list                    List popular images by category"
-            echo "  add <org> <name> ...    Add custom image to catalog"
-            echo "  remove <org> <name>     Remove image from catalog"
-            echo "  stats                   Show catalog statistics"
-            echo "  categories              List all categories"
-            echo "  export [file]           Export catalog to JSON"
-            echo "  import <file>           Import catalog from JSON"
-            ;;
-    esac
-}
-
-cmd_init() {
-    # Source template engine
-    source "${MLENV_LIB}/templates/engine.sh"
-    
-    # Initialize template system
-    template_init
-    
-    # Parse flags
-    local list_templates=false
-    local template_name=""
-    local project_name=""
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --list|-l)
-                list_templates=true
-                shift
-                ;;
-            --template|-t)
-                template_name="$2"
-                shift 2
-                ;;
-            *)
-                # First non-flag argument is project name
-                if [[ -z "$project_name" ]]; then
-                    project_name="$1"
-                fi
-                shift
-                ;;
-        esac
+# Load all command modules
+if [[ -d "${MLENV_LIB}/commands" ]]; then
+    for cmd_file in "${MLENV_LIB}/commands"/*.sh; do
+        [[ -f "$cmd_file" ]] && source "$cmd_file"
     done
-    
-    # Handle --list flag
-    if [[ "$list_templates" == "true" ]]; then
-        template_list
-        return 0
-    fi
-    
-    # Require template name
-    if [[ -z "$template_name" ]]; then
-        echo "Usage: mlenv init --template <template-name> [project-name]"
-        echo ""
-        echo "Options:"
-        echo "  --list, -l              List available templates"
-        echo "  --template <name>, -t   Template name (required)"
-        echo ""
-        echo "Examples:"
-        echo "  mlenv init --list"
-        echo "  mlenv init --template pytorch my-project"
-        echo "  mlenv init --template minimal my-experiment"
-        echo ""
-        echo "Available templates:"
-        template_list
-        return 1
-    fi
-    
-    # Determine project directory and name
-    local project_dir="${project_name:-.}"
-    local final_project_name
-    if [[ -n "$project_name" ]]; then
-        final_project_name="$(basename "$project_name")"
-    else
-        final_project_name="$(basename "$(pwd)")"
-    fi
-    
-    # If project name provided and directory doesn't exist, create it
-    if [[ -n "$project_name" ]] && [[ ! -d "$project_dir" ]]; then
-        info "Creating project directory: $project_dir"
-        mkdir -p "$project_dir" || die "Failed to create directory: $project_dir"
-    fi
-    
-    # Check if directory is empty (unless it's current directory)
-    if [[ "$project_dir" != "." ]] && [[ -d "$project_dir" ]]; then
-        local file_count=$(find "$project_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
-        if [[ $file_count -gt 0 ]]; then
-            warn "Directory '$project_dir' is not empty"
-            read -p "Continue anyway? [y/N] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                info "Cancelled"
-                return 0
-            fi
-        fi
-    fi
-    
-    # Get template path to check if it exists
-    local template_path
-    template_path=$(template_get_path "$template_name")
-    
-    if [[ $? -ne 0 ]]; then
-        error "Template not found: $template_name"
-        echo ""
-        echo "Available templates:"
-        template_list
-        return 1
-    fi
-    
-    # Show template info
-    echo ""
-    info "Template: $template_name"
-    
-    # Try to get template metadata
-    if [[ -f "$template_path/template.yaml" ]]; then
-        local desc=$(grep "^description:" "$template_path/template.yaml" | cut -d: -f2- | xargs)
-        if [[ -n "$desc" ]]; then
-            info "Description: $desc"
-        fi
-        
-        # Check for default image in template
-        local default_image=$(grep "^  image:" "$template_path/template.yaml" | head -1 | cut -d: -f2- | xargs)
-        if [[ -n "$default_image" ]]; then
-            info "Default image: $default_image"
-        fi
-    fi
-    
-    echo ""
-    
-    # Save original directory
-    local orig_dir="$(pwd)"
-    
-    # Apply template (this will cd into project_dir)
-    template_apply "$template_name" "$project_dir" "$final_project_name" || true
-    local apply_result=$?
-    
-    # Return to original directory if template_apply changed it
-    if [[ "$apply_result" -eq 0 ]]; then
-        # template_apply succeeded, now create .mlenvrc in the project directory
-        local abs_project_dir
-        if [[ "$project_dir" = /* ]]; then
-            abs_project_dir="$project_dir"
-        elif [[ "$project_dir" == "." ]]; then
-            abs_project_dir="$orig_dir"
-        else
-            abs_project_dir="$orig_dir/$project_dir"
-        fi
-        
-        # Create .mlenvrc if template has defaults
-        if [[ -f "$template_path/template.yaml" ]]; then
-            local default_image=$(grep "^  image:" "$template_path/template.yaml" | head -1 | cut -d: -f2- | xargs)
-            if [[ -n "$default_image" ]]; then
-                local mlenvrc="$abs_project_dir/.mlenvrc"
-                if [[ ! -f "$mlenvrc" ]]; then
-                    vlog "Creating .mlenvrc with template defaults..."
-                    {
-                        echo "# MLEnv Configuration"
-                        echo "# Generated from template: $template_name"
-                        echo ""
-                        echo "DEFAULT_IMAGE=$default_image"
-                        
-                        # Extract ports if available
-                        local ports=$(grep "^    - " "$template_path/template.yaml" | grep -E "[0-9]+:[0-9]+" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//' | xargs)
-                        if [[ -n "$ports" ]]; then
-                            echo "DEFAULT_PORTS=$ports"
-                        fi
-                        
-                        # Extract GPU devices if available
-                        local gpu_devices=$(grep "^  gpu_devices:" "$template_path/template.yaml" | cut -d: -f2- | xargs)
-                        if [[ -n "$gpu_devices" ]]; then
-                            echo "DEFAULT_GPUS=$gpu_devices"
-                        fi
-                    } > "$mlenvrc"
-                    success "Created .mlenvrc"
-                fi
-            fi
-        fi
-        
-        echo ""
-        success "Project initialized successfully!"
-        echo ""
-        info "Next steps:"
-        if [[ "$project_dir" != "." ]]; then
-            echo "  cd $project_dir"
-        fi
-        echo "  mlenv up"
-        echo "  mlenv exec"
-        
-        # Return to original directory
-        cd "$orig_dir" || true
-    else
-        die "Template apply failed"
-    fi
-}
+fi
 
-cmd_version() {
-    echo "MLEnv - ML Environment Manager v${VERSION}"
-    echo ""
-    engine_get_info
-}
-
-cmd_help() {
-    cat <<EOF
-MLEnv - ML Environment Manager v${VERSION}
-
-USAGE:
-  mlenv <command> [options]
-
-COMMANDS:
-  login       Authenticate with NGC
-  logout      Remove NGC authentication
-  catalog     Browse and manage NGC image catalog
-  init        Initialize project from template
-  up          Create/start container
-  exec        Open interactive shell (or run command with -c)
-  down        Stop container
-  restart     Restart container
-  rm          Remove container (keeps your code safe)
-  status      Show container status
-  logs        View debug logs
-  config      Manage configuration
-  version     Show version information
-  help        Show this help
-
-CONFIG COMMANDS:
-  mlenv config show            Show current configuration
-  mlenv config get <key>       Get config value
-  mlenv config set <key> <val> Set config value
-  mlenv config generate        Generate ~/.mlenvrc
-
-CATALOG COMMANDS:
-  mlenv catalog list           List popular NGC images by category
-  mlenv catalog search <query> Search for NGC images
-  mlenv catalog stats          Show catalog statistics
-  mlenv catalog add <org> <name>      Add custom image
-  mlenv catalog remove <org> <name>   Remove image
-
-INIT COMMANDS:
-  mlenv init --list                      List available templates
-  mlenv init --template <name> [dir]     Create project from template
-  
-  Examples:
-    mlenv init --list
-    mlenv init --template pytorch my-project
-    mlenv init --template minimal my-experiment
-
-OPTIONS (for 'up' command):
-  --image <name>              Docker image
-  --requirements <path>       Install Python requirements from file
-  --force-requirements        Force reinstall requirements
-  --port <mapping>            Port forwarding (e.g., "8888:8888,6006:6006")
-  --gpu <devices>             GPU devices (e.g., "0,1" or "all")
-  --env-file <path>           Environment variables file
-  --memory <limit>            Memory limit (e.g., "16g")
-  --cpus <limit>              CPU limit (e.g., "4.0")
-  --no-user-mapping           Run as root instead of current user
-  --verbose                   Enable verbose output
-
-EXAMPLES:
-  # Basic setup
-  mlenv up
-  mlenv exec
-
-  # With configuration file
-  cp $(dirname $(which mlenv))/../share/mlenv/examples/mlenvrc.example ~/.mlenvrc
-  # Edit ~/.mlenvrc with your preferences
-  mlenv up
-
-  # Full setup with Jupyter
-  mlenv up --requirements requirements.txt --port 8888:8888,6006:6006
-  
-For more information: https://github.com/your-username/mlenv
-EOF
-}
-
-# Helper functions
-
-check_requirements_file() {
-    if [[ -n "$REQUIREMENTS_PATH" ]] && [[ ! -f "$REQUIREMENTS_PATH" ]]; then
-        die "Requirements file not found: $REQUIREMENTS_PATH"
-    fi
-}
-
-install_requirements() {
-    if [[ -z "$REQUIREMENTS_PATH" ]]; then
-        return 0
-    fi
-    
-    local rel_path
-    rel_path="$(realpath --relative-to="$WORKDIR" "$REQUIREMENTS_PATH")"
-    
-    # Check if already installed (unless force flag is set)
-    if [[ "$FORCE_REQUIREMENTS" == "false" ]] && [[ -f "$REQUIREMENTS_MARKER" ]]; then
-        local marker_content
-        marker_content="$(cat "$REQUIREMENTS_MARKER")"
-        local current_hash
-        current_hash="$(md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1)"
-        
-        if [[ "$marker_content" == "$current_hash" ]]; then
-            info "Requirements already installed (use --force-requirements to reinstall)"
-            return 0
-        fi
-    fi
-    
-    log "▶ Installing requirements from: $rel_path"
-    
-    local exec_args=("--user" "$(id -u)")
-    if docker_container_exec "$CONTAINER_NAME" "${exec_args[@]}" bash -c \
-        "pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r '/workspace/$rel_path'" >> "$LOG_FILE" 2>&1; then
-        md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1 > "$REQUIREMENTS_MARKER"
-        success "Requirements installed"
-    else
-        die "Failed to install requirements. Check logs: mlenv logs"
-    fi
-}
+# ============================================================================
+# COMMAND-LINE PARSING
+# ============================================================================
 
 # Parse command
 command="${1:-help}"
@@ -622,7 +88,7 @@ shift || true
 # Store remaining arguments for commands
 declare -a CMD_ARGS=()
 
-# Parse options before initializing engine
+# Parse options
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --image)
@@ -638,7 +104,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --port)
-            PORTS="$2"
+            if [[ "$command" == "jupyter" ]]; then
+                JUPYTER_PORT="$2"
+            else
+                PORTS="$2"
+            fi
             shift 2
             ;;
         --gpu)
@@ -670,6 +140,14 @@ while [[ $# -gt 0 ]]; do
             EXEC_CMD="$2"
             shift 2
             ;;
+        --template|-t)
+            CMD_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --list|-l)
+            CMD_ARGS+=("$1")
+            shift
+            ;;
         *)
             # Save non-option arguments for the command
             CMD_ARGS+=("$1")
@@ -679,7 +157,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Override config with command-line options
-[[ -n "$IMAGE" ]] && MLENV_DEFAULT_IMAGE="$IMAGE"
+[[ -n "$IMAGE" ]] && export MLENV_DEFAULT_IMAGE="$IMAGE"
 [[ -n "$GPU_DEVICES" ]] && export MLENV_GPU_DEVICES="$GPU_DEVICES"
 [[ -n "$PORTS" ]] && export MLENV_PORTS="$PORTS"
 [[ -n "$ENV_FILE" ]] && export MLENV_ENV_FILE="$ENV_FILE"
@@ -687,31 +165,58 @@ done
 [[ -n "$CPU_LIMIT" ]] && export MLENV_CPU_LIMIT="$CPU_LIMIT"
 [[ -n "$RUN_AS_USER" ]] && export MLENV_RUN_AS_USER="$RUN_AS_USER"
 
-# Execute command
+# ============================================================================
+# ENGINE INITIALIZATION
+# ============================================================================
+
+# Initialize engine for commands that need it
 case "$command" in
-    # Commands that don't need full engine initialization
-    init)     cmd_init "${CMD_ARGS[@]}" ;;
-    catalog)  cmd_catalog "${CMD_ARGS[@]}" ;;
-    config)   cmd_config "${CMD_ARGS[@]}" ;;
+    init|catalog|config|version|--version|-v|help|--help|-h)
+        # Skip engine init for these lightweight commands
+        ;;
+    *)
+        # Initialize engine for container/registry operations
+        set +e
+        engine_init
+        set -e
+        # Ensure all environment variables are set for set -u compatibility
+        export MLENV_ENV_FILE="${MLENV_ENV_FILE:-}"
+        export MLENV_MEMORY_LIMIT="${MLENV_MEMORY_LIMIT:-}"
+        export MLENV_CPU_LIMIT="${MLENV_CPU_LIMIT:-}"
+        ;;
+esac
+
+# ============================================================================
+# COMMAND ROUTING
+# ============================================================================
+
+case "$command" in
+    # Project & Configuration
+    init)     cmd_init "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    config)   cmd_config "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    
+    # NGC Registry
+    login)    cmd_login ;;
+    logout)   cmd_logout ;;
+    catalog)  cmd_catalog "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    
+    # Container Lifecycle
+    up)       cmd_up ;;
+    down)     cmd_down ;;
+    restart)  cmd_restart ;;
+    rm)       cmd_rm ;;
+    
+    # Container Interaction
+    exec)     cmd_exec ;;
+    jupyter)  cmd_jupyter ;;
+    
+    # Information
+    status)   cmd_status ;;
+    logs)     cmd_logs ;;
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
     
-    # Commands that need full engine initialization
-    login|logout|up|exec|down|restart|rm|logs|status|jupyter)
-        engine_init
-        case "$command" in
-            login)    cmd_login ;;
-            logout)   cmd_logout ;;
-            up)       cmd_up ;;
-            exec)     cmd_exec ;;
-            down)     cmd_down ;;
-            restart)  cmd_restart ;;
-            rm)       cmd_rm ;;
-            logs)     cmd_logs ;;
-            status)   cmd_status ;;
-            jupyter)  cmd_jupyter ;;
-        esac
-        ;;
+    # Unknown command
     *)
         die "Unknown command: $command. Use 'mlenv help' for usage."
         ;;
