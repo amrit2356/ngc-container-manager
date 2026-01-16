@@ -51,8 +51,9 @@ cmd_jupyter() {
                 if [[ -n "$available_port" ]]; then
                     if [[ "$available_port" != "$container_port" ]]; then
                         warn "Port $container_port is busy. Using port $available_port instead."
+                        container_port="$available_port"  # Update container port to match
                     fi
-                    PORTS="${available_port}:${container_port}"
+                    PORTS="${available_port}:${available_port}"  # Map both sides to same port
                     info "Using port forwarding: $PORTS"
                 else
                     die "Could not find an available port in range ${container_port}-8999"
@@ -108,8 +109,9 @@ cmd_jupyter() {
                     if [[ -n "$available_port" ]]; then
                         if [[ "$available_port" != "$container_port" ]]; then
                             warn "Port $container_port is busy. Using port $available_port instead."
+                            container_port="$available_port"  # Update container port to match
                         fi
-                        PORTS="${available_port}:${container_port}"
+                        PORTS="${available_port}:${available_port}"  # Map both sides to same port
                         info "Recreating container with port forwarding: $PORTS"
                     else
                         die "Could not find an available port in range ${container_port}-8999"
