@@ -116,7 +116,7 @@ engine_load_container_adapter() {
     fi
     
     export MLENV_ACTIVE_CONTAINER_ADAPTER="$adapter"
-    success "Container adapter loaded: $adapter"
+    vlog "Container adapter loaded: $adapter"
 }
 
 # Load registry adapter
@@ -144,7 +144,7 @@ engine_load_registry_adapter() {
     fi
     
     export MLENV_ACTIVE_REGISTRY_ADAPTER="$adapter"
-    success "Registry adapter loaded: $adapter"
+    vlog "Registry adapter loaded: $adapter"
 }
 
 # Check if engine is initialized

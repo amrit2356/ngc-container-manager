@@ -256,5 +256,5 @@ docker_adapter_init() {
         docker_check_gpu
     fi
     
-    success "Docker adapter initialized"
+    vlog "Docker adapter initialized"
 }

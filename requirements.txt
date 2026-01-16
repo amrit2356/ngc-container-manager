@@ -1,4 +1,0 @@
-transformers
-diffusers
-fastapi
-uvicorn

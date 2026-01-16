@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# MLEnv - ML Environment Manager (Modular Version)
+# MLEnv - ML Environment Manager (Refactored)
 # Version: 2.0.0
+# This file contains only command routing - all implementation is in lib/mlenv/
 
 set -euo pipefail
+
+# ============================================================================
+# ENVIRONMENT SETUP
+# ============================================================================
 
 # Detect installation location
 if [[ -f "/usr/local/lib/mlenv/core/engine.sh" ]]; then
@@ -17,14 +22,14 @@ fi
 
 # Verify library exists
 if [[ ! -d "$MLENV_LIB" ]]; then
-    echo "Error: MLEnv library not found at: $MLENV_LIB"
+    echo "Error: MLEnv library not found at: $MLENV_LIB" >&2
     exit 1
 fi
 
-# Initialize engine
-source "${MLENV_LIB}/core/engine.sh"
+# ============================================================================
+# GLOBAL VARIABLES
+# ============================================================================
 
-# Global variables (from original script)
 VERSION="2.0.0"
 WORKDIR="$(pwd)"
 PROJECT_NAME="$(basename "$WORKDIR")"
@@ -34,7 +39,7 @@ LOG_DIR="$WORKDIR/.mlenv"
 LOG_FILE="$LOG_DIR/mlenv.log"
 REQUIREMENTS_MARKER="$LOG_DIR/.requirements_installed"
 
-# Command-line options (will be overridden by config)
+# Command-line options (will be populated by option parser)
 IMAGE=""
 REQUIREMENTS_PATH=""
 FORCE_REQUIREMENTS=false
@@ -48,7 +53,6 @@ CPU_LIMIT=""
 RUN_AS_USER=true
 EXEC_CMD=""
 
-# Create log directory
 mkdir -p "$LOG_DIR"
 
 # Set log file for engine
@@ -490,10 +494,9 @@ EXAMPLES:
   mlenv up
   mlenv exec
 
-  # With configuration file
-  cp $(dirname $(which mlenv))/../share/mlenv/examples/mlenvrc.example ~/.mlenvrc
-  # Edit ~/.mlenvrc with your preferences
-  mlenv up
+# Utility functions (only if they exist - some may be in core)
+[[ -f "${MLENV_LIB}/utils/port-utils.sh" ]] && source "${MLENV_LIB}/utils/port-utils.sh"
+[[ -f "${MLENV_LIB}/utils/container-utils.sh" ]] && source "${MLENV_LIB}/utils/container-utils.sh"
 
   # Full setup with Jupyter (auto-detects port 8888)
   mlenv up --requirements requirements.txt --port 8888:8888,6006:6006
@@ -524,52 +527,25 @@ For more information: https://github.com/your-username/mlenv
 EOF
 }
 
-# Helper functions
+# Load all command modules
+if [[ -d "${MLENV_LIB}/commands" ]]; then
+    for cmd_file in "${MLENV_LIB}/commands"/*.sh; do
+        [[ -f "$cmd_file" ]] && source "$cmd_file"
+    done
+fi
 
-check_requirements_file() {
-    if [[ -n "$REQUIREMENTS_PATH" ]] && [[ ! -f "$REQUIREMENTS_PATH" ]]; then
-        die "Requirements file not found: $REQUIREMENTS_PATH"
-    fi
-}
-
-install_requirements() {
-    if [[ -z "$REQUIREMENTS_PATH" ]]; then
-        return 0
-    fi
-    
-    local rel_path
-    rel_path="$(realpath --relative-to="$WORKDIR" "$REQUIREMENTS_PATH")"
-    
-    # Check if already installed (unless force flag is set)
-    if [[ "$FORCE_REQUIREMENTS" == "false" ]] && [[ -f "$REQUIREMENTS_MARKER" ]]; then
-        local marker_content
-        marker_content="$(cat "$REQUIREMENTS_MARKER")"
-        local current_hash
-        current_hash="$(md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1)"
-        
-        if [[ "$marker_content" == "$current_hash" ]]; then
-            info "Requirements already installed (use --force-requirements to reinstall)"
-            return 0
-        fi
-    fi
-    
-    log "▶ Installing requirements from: $rel_path"
-    
-    local exec_args=("--user" "$(id -u)")
-    if docker_container_exec "$CONTAINER_NAME" "${exec_args[@]}" bash -c \
-        "pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r '/workspace/$rel_path'" >> "$LOG_FILE" 2>&1; then
-        md5sum "$REQUIREMENTS_PATH" | cut -d' ' -f1 > "$REQUIREMENTS_MARKER"
-        success "Requirements installed"
-    else
-        die "Failed to install requirements. Check logs: mlenv logs"
-    fi
-}
+# ============================================================================
+# COMMAND-LINE PARSING
+# ============================================================================
 
 # Parse command
 command="${1:-help}"
 shift || true
 
-# Parse options before initializing engine
+# Store remaining arguments for commands
+declare -a CMD_ARGS=()
+
+# Parse options
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --image)
@@ -622,17 +598,24 @@ while [[ $# -gt 0 ]]; do
             EXEC_CMD="$2"
             shift 2
             ;;
+        --template|-t)
+            CMD_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --list|-l)
+            CMD_ARGS+=("$1")
+            shift
+            ;;
         *)
+            # Save non-option arguments for the command
+            CMD_ARGS+=("$1")
             shift
             ;;
     esac
 done
 
-# Initialize engine
-engine_init
-
 # Override config with command-line options
-[[ -n "$IMAGE" ]] && MLENV_DEFAULT_IMAGE="$IMAGE"
+[[ -n "$IMAGE" ]] && export MLENV_DEFAULT_IMAGE="$IMAGE"
 [[ -n "$GPU_DEVICES" ]] && export MLENV_GPU_DEVICES="$GPU_DEVICES"
 [[ -n "$PORTS" ]] && export MLENV_PORTS="$PORTS"
 [[ -n "$ENV_FILE" ]] && export MLENV_ENV_FILE="$ENV_FILE"
@@ -640,21 +623,59 @@ engine_init
 [[ -n "$CPU_LIMIT" ]] && export MLENV_CPU_LIMIT="$CPU_LIMIT"
 [[ -n "$RUN_AS_USER" ]] && export MLENV_RUN_AS_USER="$RUN_AS_USER"
 
-# Execute command
+# ============================================================================
+# ENGINE INITIALIZATION
+# ============================================================================
+
+# Initialize engine for commands that need it
 case "$command" in
+    init|catalog|config|clean|version|--version|-v|help|--help|-h)
+        # Skip engine init for these lightweight commands
+        ;;
+    *)
+        # Initialize engine for container/registry operations
+        set +e
+        engine_init
+        set -e
+        # Ensure all environment variables are set for set -u compatibility
+        export MLENV_ENV_FILE="${MLENV_ENV_FILE:-}"
+        export MLENV_MEMORY_LIMIT="${MLENV_MEMORY_LIMIT:-}"
+        export MLENV_CPU_LIMIT="${MLENV_CPU_LIMIT:-}"
+        ;;
+esac
+
+# ============================================================================
+# COMMAND ROUTING
+# ============================================================================
+
+case "$command" in
+    # Project & Configuration
+    init)     cmd_init "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    config)   cmd_config "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    
+    # NGC Registry
     login)    cmd_login ;;
     logout)   cmd_logout ;;
+    catalog)  cmd_catalog "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    
+    # Container Lifecycle
     up)       cmd_up ;;
-    exec)     cmd_exec ;;
     down)     cmd_down ;;
     restart)  cmd_restart ;;
     rm)       cmd_rm ;;
-    logs)     cmd_logs ;;
+    
+    # Container Interaction
+    exec)     cmd_exec ;;
+    jupyter)  cmd_jupyter ;;
+    
+    # Information
     status)   cmd_status ;;
     jupyter)  cmd_jupyter ;;
     config)   cmd_config "$@" ;;
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
+    
+    # Unknown command
     *)
         die "Unknown command: $command. Use 'mlenv help' for usage."
         ;;

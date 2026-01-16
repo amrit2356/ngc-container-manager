@@ -174,5 +174,5 @@ ngc_adapter_init() {
         chmod 700 "$NGC_CONFIG_DIR"
     fi
     
-    success "NGC adapter initialized"
+    vlog "NGC adapter initialized"
 }
