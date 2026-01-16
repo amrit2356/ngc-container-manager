@@ -22,9 +22,17 @@ COMMANDS:
   status      Show container status
   jupyter     Start Jupyter Lab (auto-detects ports)
   logs        View debug logs
+  clean       Remove MLEnv artifacts and optionally containers/images
   config      Manage configuration
   version     Show version information
   help        Show this help
+
+CLEAN COMMANDS:
+  mlenv clean                  Clean logs (default)
+  mlenv clean --logs           Clean logs only
+  mlenv clean --containers     Remove stopped MLEnv containers
+  mlenv clean --images         Remove dangling Docker images
+  mlenv clean --all            Clean everything (logs, containers, images)
 
 CONFIG COMMANDS:
   mlenv config show            Show current configuration
