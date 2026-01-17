@@ -10,6 +10,40 @@ source "${MLENV_LIB}/utils/error.sh"
 # Global configuration storage
 declare -gA MLENV_CONFIG
 
+# Known valid config sections
+declare -a VALID_CONFIG_SECTIONS=(
+    "core" "container" "gpu" "network" "storage" 
+    "resources" "registry" "requirements" "devcontainer" "features"
+)
+
+# Validate config key format
+config_validate_key() {
+    local key="$1"
+    
+    # Key should be in format: section.key
+    if ! [[ "$key" =~ ^[a-z_]+\.[a-z_]+$ ]]; then
+        return 1
+    fi
+    
+    # Extract section
+    local section="${key%%.*}"
+    
+    # Check if section is known (warning only, not fatal)
+    local valid=false
+    for valid_section in "${VALID_CONFIG_SECTIONS[@]}"; do
+        if [[ "$section" == "$valid_section" ]]; then
+            valid=true
+            break
+        fi
+    done
+    
+    if [[ "$valid" == "false" ]]; then
+        vlog "Unknown config section: $section (this may be intentional)"
+    fi
+    
+    return 0
+}
+
 # Parse INI config file
 config_parse_file() {
     local config_file="$1"
@@ -46,9 +80,20 @@ config_parse_file() {
             
             # Store with section prefix
             if [[ -n "$section" ]]; then
-                MLENV_CONFIG["${section}.${key}"]="$value"
-                vlog "    ${section}.${key} = $value"
+                local full_key="${section}.${key}"
+                # Validate key format
+                if ! config_validate_key "$full_key"; then
+                    warn "Invalid config key in $config_file: $full_key (skipping)"
+                    continue
+                fi
+                MLENV_CONFIG["$full_key"]="$value"
+                vlog "    $full_key = $value"
             else
+                # Validate key format
+                if ! config_validate_key "$key"; then
+                    warn "Invalid config key in $config_file: $key (skipping)"
+                    continue
+                fi
                 MLENV_CONFIG["$key"]="$value"
                 vlog "    $key = $value"
             fi

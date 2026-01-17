@@ -64,34 +64,9 @@ source "${MLENV_LIB}/core/engine.sh"
 [[ -f "${MLENV_LIB}/utils/port-utils.sh" ]] && source "${MLENV_LIB}/utils/port-utils.sh"
 [[ -f "${MLENV_LIB}/utils/container-utils.sh" ]] && source "${MLENV_LIB}/utils/container-utils.sh"
 
-  # Full setup with Jupyter (auto-detects port 8888)
-  mlenv up --requirements requirements.txt --port 8888:8888,6006:6006
-  mlenv jupyter
-  # Access at: http://localhost:8888
-
-  # Jupyter on custom port
-  mlenv up --port 8889:8889
-  mlenv jupyter
-  # Access at: http://localhost:8889
-
-  # Multiple Jupyter instances on same container
-  mlenv up --port 8888:8888,8889:8889,8890:8890
-  mlenv jupyter --port 8888    # Terminal 1 → http://localhost:8888
-  mlenv jupyter --port 8889    # Terminal 2 → http://localhost:8889
-
-  # Run specific command
-  mlenv exec -c "python train.py --epochs 10"
-  
-PORT FORWARDING NOTES:
-  • Port forwarding must be set during container creation (mlenv up --port)
-  • Format: "host_port:container_port" (e.g., "8888:8888")
-  • mlenv jupyter automatically detects forwarded ports
-  • Priority: 8888 → 8889-8899 → first available
-  • Check current forwarding with: mlenv status
-  
-For more information: https://github.com/your-username/mlenv
-EOF
-}
+# ============================================================================
+# LOAD COMMAND IMPLEMENTATIONS
+# ============================================================================
 
 # Load all command modules
 if [[ -d "${MLENV_LIB}/commands" ]]; then
@@ -200,9 +175,11 @@ case "$command" in
         ;;
     *)
         # Initialize engine for container/registry operations
-        set +e
-        engine_init
-        set -e
+        if ! engine_init; then
+            echo "✖ Failed to initialize MLEnv engine" >&2
+            echo "ℹ Run with --verbose for more details: mlenv --verbose $command" >&2
+            exit 1
+        fi
         # Ensure all environment variables are set for set -u compatibility
         export MLENV_ENV_FILE="${MLENV_ENV_FILE:-}"
         export MLENV_MEMORY_LIMIT="${MLENV_MEMORY_LIMIT:-}"
@@ -236,8 +213,12 @@ case "$command" in
     
     # Information
     status)   cmd_status ;;
-    jupyter)  cmd_jupyter ;;
-    config)   cmd_config "$@" ;;
+    logs)     cmd_logs ;;
+    
+    # Maintenance
+    clean)    cmd_clean "${CMD_ARGS[@]+"${CMD_ARGS[@]}"}" ;;
+    
+    # Help & Version
     version|--version|-v)  cmd_version ;;
     help|--help|-h)  cmd_help ;;
     

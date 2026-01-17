@@ -3,16 +3,28 @@
 # Version: 2.0.0
 
 cmd_status() {
-    local status=$(container_get_status "$CONTAINER_NAME")
+    # Create context from global state (for now)
+    declare -A ctx
+    mlenv_context_create ctx
+    
+    # Validate context
+    if ! mlenv_context_validate ctx; then
+        die "Invalid context"
+    fi
+    
+    # Use context variables instead of globals
+    local container_name="${ctx[container_name]}"
+    local workdir="${ctx[workdir]}"
+    local status=$(container_get_status "$container_name")
     
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "Container: $CONTAINER_NAME"
+    echo "Container: $container_name"
     echo "Status: $status"
-    echo "Workdir: $WORKDIR"
+    echo "Workdir: $workdir"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    if container_exists "$CONTAINER_NAME"; then
+    if container_exists "$container_name"; then
         echo ""
-        container_list "name=${CONTAINER_NAME}"
+        container_list "name=${container_name}"
     fi
 }
