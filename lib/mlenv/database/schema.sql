@@ -131,6 +131,15 @@ CREATE TABLE IF NOT EXISTS project_quotas (
     current_gpus INTEGER DEFAULT 0
 );
 
+-- GPU Allocations (for reservation system)
+CREATE TABLE IF NOT EXISTS gpu_allocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    gpu_id INTEGER NOT NULL,
+    container_name TEXT NOT NULL,
+    allocated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(gpu_id, container_name)
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_images_category ON ngc_images(category);
 CREATE INDEX IF NOT EXISTS idx_images_org ON ngc_images(organization);
@@ -140,6 +149,8 @@ CREATE INDEX IF NOT EXISTS idx_containers_project ON container_instances(project
 CREATE INDEX IF NOT EXISTS idx_metrics_container ON resource_metrics(container_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON resource_metrics(timestamp);
 CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON system_snapshots(timestamp);
+CREATE INDEX IF NOT EXISTS idx_gpu_allocations_gpu ON gpu_allocations(gpu_id);
+CREATE INDEX IF NOT EXISTS idx_gpu_allocations_container ON gpu_allocations(container_name);
 
 -- Views for common queries
 

@@ -13,16 +13,18 @@ source "${MLENV_LIB}/utils/validation.sh"
 
 source "${MLENV_LIB}/config/parser.sh"
 source "${MLENV_LIB}/config/defaults.sh"
+source "${MLENV_LIB}/config/accessor.sh"
 source "${MLENV_LIB}/config/validator.sh"
 
+source "${MLENV_LIB}/core/context.sh"
 source "${MLENV_LIB}/core/container.sh"
 source "${MLENV_LIB}/core/image.sh"
 source "${MLENV_LIB}/core/auth.sh"
 source "${MLENV_LIB}/core/devcontainer.sh"
 
-source "${MLENV_LIB}/ports/container-port.sh"
-source "${MLENV_LIB}/ports/image-port.sh"
-source "${MLENV_LIB}/ports/auth-port.sh"
+source "${MLENV_LIB}/adapters/interfaces/container-port.sh"
+source "${MLENV_LIB}/adapters/interfaces/image-port.sh"
+source "${MLENV_LIB}/adapters/interfaces/auth-port.sh"
 
 # Global state
 export MLENV_ACTIVE_CONTAINER_ADAPTER=""
@@ -55,36 +57,20 @@ engine_init() {
 
 # Apply configuration to environment variables
 engine_apply_config() {
-    # Apply logging settings
-    MLENV_LOG_LEVEL=$(config_get "core.log_level" "info")
+    # Apply logging settings using effective config (respects CLI flags and env vars)
+    MLENV_LOG_LEVEL=$(config_get_effective "core.log_level" "info")
     set_log_level "$MLENV_LOG_LEVEL"
     
-    # Apply container settings
-    export MLENV_DEFAULT_IMAGE=$(config_get "container.default_image" "nvcr.io/nvidia/pytorch:25.12-py3")
-    export MLENV_RESTART_POLICY=$(config_get "container.restart_policy" "unless-stopped")
-    export MLENV_SHM_SIZE=$(config_get "container.shm_size" "16g")
-    export MLENV_RUN_AS_USER=$(config_get "container.run_as_user" "true")
-    
-    # Apply GPU settings
-    export MLENV_GPU_DEVICES=$(config_get "gpu.default_devices" "all")
-    
-    # Apply network settings
-    export MLENV_PORTS=$(config_get "network.default_ports" "")
-    
-    # Apply resource settings
-    export MLENV_MEMORY_LIMIT=$(config_get "resources.default_memory_limit" "")
-    export MLENV_CPU_LIMIT=$(config_get "resources.default_cpu_limit" "")
-    
-    # Apply registry settings
-    export MLENV_NGC_REGISTRY=$(config_get "registry.ngc_url" "nvcr.io")
+    # Export all configuration to environment using unified accessor
+    config_export_to_env
     
     vlog "Configuration applied to environment"
 }
 
 # Initialize adapters
 engine_init_adapters() {
-    local container_adapter=$(config_get "container.adapter" "docker")
-    local registry_adapter=$(config_get "registry.default" "ngc")
+    local container_adapter=$(config_get_effective "container.adapter" "docker")
+    local registry_adapter=$(config_get_effective "registry.default" "ngc")
     
     # Load container adapter
     engine_load_container_adapter "$container_adapter"

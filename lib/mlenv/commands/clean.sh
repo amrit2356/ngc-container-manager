@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 # MLEnv Clean Command
+# Version: 2.1.0 - Context-based
 # Removes MLEnv artifacts, logs, and optionally containers/images
 
+# Source command helpers
+source "${MLENV_LIB}/utils/command-helpers.sh"
+
 cmd_clean() {
+  # Initialize context
+  declare -A ctx
+  cmd_init_context ctx || return 1
+  
+  local log_dir="${ctx[log_dir]}"
+  local workdir="${ctx[workdir]}"
+  
   local clean_logs=false
   local clean_containers=false
   local clean_images=false
@@ -33,6 +44,7 @@ cmd_clean() {
           shift
           ;;
         *)
+          warn "Unknown option: $1"
           shift
           ;;
       esac
@@ -44,9 +56,12 @@ cmd_clean() {
   
   # Clean logs
   if [ "$clean_logs" = true ]; then
-    if [ -d "$LOG_DIR" ]; then
-      rm -rf "$LOG_DIR"
-      success "Cleaned logs: $LOG_DIR"
+    if [ -d "$log_dir" ]; then
+      rm -rf "$log_dir" || {
+        error_with_help "Failed to clean logs: $log_dir" "permission_denied"
+        return 1
+      }
+      success "Cleaned logs: $log_dir"
     else
       info "No logs to clean"
     fi
@@ -96,4 +111,5 @@ cmd_clean() {
   
   echo ""
   success "Cleanup complete"
+  return 0
 }

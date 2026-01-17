@@ -8,6 +8,9 @@ install_requirements() {
         return 0
     fi
     
+    # Ensure directory exists before writing marker
+    mkdir -p "$LOG_DIR"
+    
     local rel_path
     rel_path="$(realpath --relative-to="$WORKDIR" "$REQUIREMENTS_PATH")"
     

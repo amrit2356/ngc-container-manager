@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # MLEnv Input Validation
-# Version: 2.0.0
+# Version: 2.1.0 - Enhanced with security validation
+
+# Source sanitization utilities for enhanced validation
+source "${MLENV_LIB}/utils/sanitization.sh"
 
 # Validate port format (e.g., "8888:8888" or "8888:8888,6006:6006")
 validate_ports() {
@@ -52,33 +55,8 @@ validate_gpu_devices() {
     return 0
 }
 
-# Validate container name
-validate_container_name() {
-    local name="$1"
-    
-    # Docker container name requirements
-    if ! [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]+$ ]]; then
-        return 1
-    fi
-    
-    return 0
-}
-
-# Validate image name
-validate_image_name() {
-    local image="$1"
-    
-    if [[ -z "$image" ]]; then
-        return 1
-    fi
-    
-    # Basic image name validation (registry/org/image:tag)
-    if ! [[ "$image" =~ ^[a-z0-9./-]+(:[ a-zA-Z0-9._-]+)?$ ]]; then
-        return 1
-    fi
-    
-    return 0
-}
+# Note: validate_container_name and validate_image_name are now in sanitization.sh
+# They provide enhanced security validation and are imported above
 
 # Validate memory limit format
 validate_memory_limit() {
@@ -174,4 +152,64 @@ normalize_boolean() {
             echo "false"
             ;;
     esac
+}
+
+# Validate Docker is available
+validate_docker() {
+    if ! command -v docker &>/dev/null; then
+        error "Docker is not installed or not in PATH"
+        info "Install Docker: https://docs.docker.com/get-docker/"
+        return 1
+    fi
+    
+    if ! docker info &>/dev/null; then
+        error "Docker daemon is not running"
+        info "Start Docker and try again"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate workspace directory
+validate_workspace() {
+    local workdir="$1"
+    
+    if [[ ! -d "$workdir" ]]; then
+        error "Workspace directory does not exist: $workdir"
+        return 1
+    fi
+    
+    if [[ ! -w "$workdir" ]]; then
+        error "Workspace directory is not writable: $workdir"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate requirements file
+validate_requirements_file() {
+    local file="$1"
+    
+    if [[ -z "$file" ]]; then
+        return 0
+    fi
+    
+    if [[ ! -f "$file" ]]; then
+        error "Requirements file not found: $file"
+        return 1
+    fi
+    
+    if [[ ! -r "$file" ]]; then
+        error "Requirements file is not readable: $file"
+        return 1
+    fi
+    
+    # Basic syntax check
+    if grep -q '[^a-zA-Z0-9_=<>!.,-]' "$file" 2>/dev/null; then
+        warn "Requirements file may contain invalid characters"
+    fi
+    
+    return 0
 }

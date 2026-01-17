@@ -2,6 +2,10 @@
 # Container Manager Port (Interface)
 # Version: 2.0.0
 
+# Source guard to prevent multiple sourcing
+[[ -n "${_CONTAINER_PORT_SH_LOADED:-}" ]] && return
+_CONTAINER_PORT_SH_LOADED=1
+
 # Define the interface contract
 declare -A CONTAINER_PORT_METHODS=(
     [create]="container_create"
@@ -98,14 +102,16 @@ container_logs() {
 
 container_exists() {
     if [[ -z "$MLENV_ACTIVE_CONTAINER_ADAPTER" ]]; then
-        die "No container adapter loaded"
+        error "container_exists not implemented - adapter not loaded"
+        return 1
     fi
     "${MLENV_ACTIVE_CONTAINER_ADAPTER}_container_exists" "$@"
 }
 
 container_is_running() {
     if [[ -z "$MLENV_ACTIVE_CONTAINER_ADAPTER" ]]; then
-        die "No container adapter loaded"
+        error "container_is_running not implemented - adapter not loaded"
+        return 1
     fi
     "${MLENV_ACTIVE_CONTAINER_ADAPTER}_container_is_running" "$@"
 }

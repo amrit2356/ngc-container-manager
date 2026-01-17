@@ -3,33 +3,36 @@
 # Version: 2.0.0
 
 cmd_jupyter() {
-    # Docker and GPU checks (matches v1.1.0 reference)
-    if ! command -v docker >/dev/null 2>&1; then
-        die "Docker is not installed. Install from https://docs.docker.com/get-docker/"
+    # Create context from global state
+    declare -A ctx
+    mlenv_context_create ctx
+    
+    if ! mlenv_context_validate ctx; then
+        die "Invalid context"
     fi
-    if ! docker info >/dev/null 2>&1; then
-        die "Docker daemon is not running. Start Docker and try again."
+    
+    local container_name="${ctx[container_name]}"
+    local workdir="${ctx[workdir]}"
+    local requirements_path="${ctx[requirements_path]}"
+    local ports="${ctx[ports]}"
+    local jupyter_port="${ctx[jupyter_port]}"
+    
+    # Docker and GPU checks
+    if ! validate_docker; then
+        die "Docker validation failed"
     fi
+    
     if ! docker info 2>/dev/null | grep -q "Runtimes:.*nvidia"; then
         die "NVIDIA Container Toolkit not detected. Install from https://github.com/NVIDIA/nvidia-container-toolkit"
     fi
     
     # Determine which port to use (default to 8888 if not specified)
-    local container_port="${JUPYTER_PORT:-8888}"
+    local container_port="${jupyter_port:-8888}"
     local default_ports="${container_port}:${container_port}"
     local host_port=""
     
-    # Check container status (using direct docker commands like v1.1.0)
-    local status
-    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-            status="running"
-        else
-            status="stopped"
-        fi
-    else
-        status="absent"
-    fi
+    # Check container status
+    local status=$(container_get_status "$container_name")
     
     case "$status" in
         absent)
@@ -37,13 +40,14 @@ cmd_jupyter() {
             log "▶ Container not found. Creating with Jupyter port forwarding..."
             
             # Auto-detect requirements.txt if it exists and wasn't specified
-            if [[ -z "$REQUIREMENTS_PATH" ]] && [[ -f "$WORKDIR/requirements.txt" ]]; then
-                REQUIREMENTS_PATH="$WORKDIR/requirements.txt"
+            if [[ -z "$requirements_path" ]] && [[ -f "$workdir/requirements.txt" ]]; then
+                requirements_path="$workdir/requirements.txt"
+                REQUIREMENTS_PATH="$requirements_path"  # Update global for cmd_up
                 info "Auto-detected requirements.txt"
             fi
             
             # Set default port forwarding if not already set
-            if [[ -z "$PORTS" ]]; then
+            if [[ -z "$ports" ]]; then
                 # Find an available port automatically
                 local available_port
                 available_port=$(find_available_port "$container_port")
@@ -53,8 +57,9 @@ cmd_jupyter() {
                         warn "Port $container_port is busy. Using port $available_port instead."
                         container_port="$available_port"  # Update container port to match
                     fi
-                    PORTS="${available_port}:${available_port}"  # Map both sides to same port
-                    info "Using port forwarding: $PORTS"
+                    ports="${available_port}:${available_port}"  # Map both sides to same port
+                    PORTS="$ports"  # Update global for cmd_up
+                    info "Using port forwarding: $ports"
                 else
                     die "Could not find an available port in range ${container_port}-8999"
                 fi

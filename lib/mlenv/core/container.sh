@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MLEnv Container Core Logic
-# Version: 2.0.0
+# Version: 2.1.0
 
 # Source dependencies
 source "${MLENV_LIB}/utils/logging.sh"
@@ -20,6 +20,36 @@ container_get_status() {
     else
         echo "absent"
     fi
+}
+
+# Check for container name collision atomically
+# This prevents race conditions where two processes try to create the same container
+# Arguments:
+#   $1: container name
+# Returns: 0 if name is free, 1 if collision detected
+container_check_collision() {
+    local container_name="$1"
+    
+    # Check if container already exists in Docker
+    if container_exists "$container_name"; then
+        error "Container name collision: $container_name already exists"
+        info "This may be a race condition from concurrent mlenv up commands"
+        info "Existing container status: $(container_get_status "$container_name")"
+        return 1
+    fi
+    
+    # Check if container is tracked in database but not in Docker (stale entry)
+    if command -v db_query >/dev/null 2>&1; then
+        local db_count=$(db_query "SELECT COUNT(*) FROM container_instances WHERE container_name='$container_name'" "-list" 2>/dev/null || echo "0")
+        if [[ "$db_count" -gt 0 ]]; then
+            warn "Container found in database but not in Docker (stale entry)"
+            # Clean up stale entry
+            db_execute "DELETE FROM container_instances WHERE container_name='$container_name'" 2>/dev/null || true
+        fi
+    fi
+    
+    vlog "Container name is available: $container_name"
+    return 0
 }
 
 # Build Docker run arguments (extracted from original)
@@ -196,13 +226,5 @@ container_find_jupyter_port() {
     return 1
 }
 
-# These functions will be implemented by adapters (interface methods)
-container_exists() {
-    local container_name="$1"
-    die "container_exists not implemented - adapter not loaded"
-}
-
-container_is_running() {
-    local container_name="$1"
-    die "container_is_running not implemented - adapter not loaded"
-}
+# Note: container_exists() and container_is_running() are provided by the adapter interface
+# See: lib/mlenv/adapters/interfaces/container-port.sh

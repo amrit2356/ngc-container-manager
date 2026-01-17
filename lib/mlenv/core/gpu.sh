@@ -1,10 +1,118 @@
 #!/usr/bin/env bash
 # MLEnv Auto GPU Detection & Allocation
-# Version: 2.0.0
+# Version: 2.1.0
 
 # Source dependencies
 source "${MLENV_LIB}/utils/logging.sh"
 source "${MLENV_LIB}/utils/error.sh"
+
+# GPU reservation functions
+
+# Check if GPU is reserved
+# Arguments:
+#   $1: GPU ID
+# Returns: 0 if reserved, 1 if free
+gpu_is_reserved() {
+    local gpu_id="$1"
+    
+    if ! command -v db_query >/dev/null 2>&1; then
+        return 1  # No DB, assume not reserved
+    fi
+    
+    local count=$(db_query "SELECT COUNT(*) FROM gpu_allocations WHERE gpu_id=$gpu_id" "-list" 2>/dev/null || echo "0")
+    [[ "$count" -gt 0 ]]
+}
+
+# Reserve GPU for container
+# Arguments:
+#   $1: GPU IDs (comma-separated, e.g., "0,1")
+#   $2: container name
+# Returns: 0 on success
+gpu_reserve() {
+    local gpu_ids="$1"
+    local container_name="$2"
+    
+    if [[ -z "$gpu_ids" ]] || [[ "$gpu_ids" == "all" ]]; then
+        vlog "GPU reservation skipped (all GPUs requested)"
+        return 0
+    fi
+    
+    if ! command -v db_execute >/dev/null 2>&1; then
+        warn "Database not available - GPU reservation disabled"
+        return 0
+    fi
+    
+    vlog "Reserving GPUs: $gpu_ids for container: $container_name"
+    
+    # Split GPU IDs and reserve each
+    IFS=',' read -ra GPU_ARRAY <<< "$gpu_ids"
+    for gpu_id in "${GPU_ARRAY[@]}"; do
+        # Remove whitespace
+        gpu_id=$(echo "$gpu_id" | tr -d ' ')
+        
+        # Check if already reserved
+        if gpu_is_reserved "$gpu_id"; then
+            local existing_container=$(db_query "SELECT container_name FROM gpu_allocations WHERE gpu_id=$gpu_id" "-list" 2>/dev/null)
+            warn "GPU $gpu_id already reserved by: $existing_container"
+            # Don't fail, just warn - container might have crashed
+        fi
+        
+        # Reserve GPU (INSERT OR REPLACE to handle re-allocation)
+        db_execute "INSERT OR REPLACE INTO gpu_allocations (gpu_id, container_name, allocated_at) 
+                    VALUES ($gpu_id, '$container_name', datetime('now'))" 2>/dev/null || {
+            error "Failed to reserve GPU $gpu_id"
+            return 1
+        }
+        
+        vlog "✓ Reserved GPU $gpu_id"
+    done
+    
+    success "GPUs reserved: $gpu_ids"
+    return 0
+}
+
+# Release GPU reservations for container
+# Arguments:
+#   $1: container name
+# Returns: 0 on success
+gpu_release() {
+    local container_name="$1"
+    
+    if ! command -v db_execute >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    vlog "Releasing GPUs for container: $container_name"
+    
+    # Get GPUs before deleting (for logging)
+    local gpus=$(db_query "SELECT GROUP_CONCAT(gpu_id) FROM gpu_allocations WHERE container_name='$container_name'" "-list" 2>/dev/null || echo "")
+    
+    if [[ -n "$gpus" ]]; then
+        db_execute "DELETE FROM gpu_allocations WHERE container_name='$container_name'" 2>/dev/null || {
+            error "Failed to release GPUs"
+            return 1
+        }
+        info "✓ Released GPUs: $gpus"
+    else
+        vlog "No GPUs to release for container: $container_name"
+    fi
+    
+    return 0
+}
+
+# Get reserved GPUs for container
+# Arguments:
+#   $1: container name
+# Returns: comma-separated GPU IDs
+gpu_get_reserved() {
+    local container_name="$1"
+    
+    if ! command -v db_query >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    db_query "SELECT GROUP_CONCAT(gpu_id) FROM gpu_allocations WHERE container_name='$container_name'" "-list" 2>/dev/null || echo ""
+}
 
 # GPU selection thresholds (configurable)
 GPU_UTILIZATION_THRESHOLD="${MLENV_GPU_UTIL_THRESHOLD:-30}"
@@ -22,11 +130,17 @@ gpu_get_all_info() {
         --format=csv,noheader,nounits 2>/dev/null
 }
 
-# Check if GPU is "free" (low utilization, enough memory)
+# Check if GPU is "free" (low utilization, enough memory, not reserved)
 gpu_is_free() {
     local gpu_id="$1"
     local util="$2"
     local mem_free="$3"
+    
+    # Check if reserved
+    if gpu_is_reserved "$gpu_id"; then
+        vlog "GPU $gpu_id is reserved"
+        return 1
+    fi
     
     # Check utilization
     if (( util >= GPU_UTILIZATION_THRESHOLD )); then
