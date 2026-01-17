@@ -5,6 +5,9 @@
 # Source dependencies
 source "${MLENV_LIB}/utils/cleanup.sh"
 source "${MLENV_LIB}/utils/command-helpers.sh"
+source "${MLENV_LIB}/utils/retry.sh"
+source "${MLENV_LIB}/utils/resource-tracker.sh"
+source "${MLENV_LIB}/resource/admission.sh"
 
 cmd_up() {
     # Initialize context
@@ -16,6 +19,9 @@ cmd_up() {
     
     # Initialize cleanup system for transactional behavior
     cleanup_init
+    
+    # Initialize resource tracking
+    resource_tracking_init
     
     # Extract context values
     local container_name="${ctx[container_name]}"
@@ -36,6 +42,14 @@ cmd_up() {
     if ! cmd_require_container_env; then
         cleanup_disable
         return 1
+    fi
+    
+    # Admission control check (if enabled)
+    if admission_is_enabled; then
+        if ! admission_check_container_creation "$container_name" "$memory_limit" "$cpu_limit" "$gpu_devices"; then
+            cleanup_disable
+            return 1
+        fi
     fi
     
     if ! cmd_validate_workspace "$workdir"; then
@@ -79,32 +93,47 @@ cmd_up() {
             cleanup_disable  # No cleanup needed for restart
             ;;
         absent)
+            # Check for container name collision (prevents race conditions)
+            if ! container_check_collision "$container_name"; then
+                cleanup_disable
+                error_with_help "Container name collision detected" "container_exists"
+                return 1
+            fi
+            
             # Validate image name
             if ! cmd_validate_image_name "$image"; then
                 cleanup_disable
                 return 1
             fi
             
-            # Pull image if needed
+            # Pull image if needed (with retry for network failures)
             if ! image_exists "$image"; then
                 log "▶ Pulling image: $image"
-                if ! image_pull "$image"; then
+                info "This may take a few minutes on first run..."
+                
+                # Retry image pull up to 3 times with exponential backoff
+                local max_pull_attempts="${MLENV_IMAGE_PULL_RETRIES:-3}"
+                if ! retry_with_backoff "$max_pull_attempts" 2 image_pull "$image"; then
                     cleanup_disable
-                    error_with_help "Failed to pull image: $image" "image_pull_error"
+                    error_with_help "Failed to pull image after $max_pull_attempts attempts: $image" "image_pull_error"
+                    info "This may be due to network issues or invalid image name"
                     return 1
                 fi
+                success "Image pulled successfully"
             fi
             
             # Create init script if running as user
             if [[ "$run_as_user" == "true" ]]; then
                 container_create_init_script "$log_dir"
                 cleanup_register "rm -f '$log_dir/init.sh'"
+                resource_track temp_file "$log_dir/init.sh"
             fi
             
             # Create devcontainer config
             if [[ "$(config_get_effective 'devcontainer.auto_generate' 'true')" == "true" ]]; then
                 devcontainer_create_config "$workdir"
                 cleanup_register "rm -rf '$workdir/.devcontainer'"
+                resource_track temp_dir "$workdir/.devcontainer"
             fi
             
             log "▶ Creating container: $container_name"
@@ -112,6 +141,17 @@ cmd_up() {
             # Build container args (still uses globals for compatibility)
             # TODO: Refactor container_build_run_args to accept context
             readarray -t container_args < <(container_build_run_args "$container_name" "$image" "$workdir")
+            
+            # Reserve GPUs if specified
+            if [[ -n "$gpu_devices" ]] && [[ "$gpu_devices" != "all" ]]; then
+                if ! gpu_reserve "$gpu_devices" "$container_name"; then
+                    cleanup_disable
+                    error_with_help "Failed to reserve GPUs" "gpu_reservation_error"
+                    return 1
+                fi
+                cleanup_register "gpu_release '$container_name'"
+                resource_track gpu "$gpu_devices"
+            fi
             
             # Create container via adapter
             if container_create "$container_name" "${container_args[@]}"; then
@@ -141,9 +181,14 @@ cmd_up() {
                 fi
             fi
             
-            # Success - clear cleanup actions
+            # Success - clear cleanup actions and untrack resources
             cleanup_clear
             cleanup_disable
+            
+            # Untrack successfully created resources
+            resource_untrack temp_file "$log_dir/init.sh"
+            resource_untrack temp_dir "$workdir/.devcontainer"
+            resource_tracking_disable
             ;;
     esac
     

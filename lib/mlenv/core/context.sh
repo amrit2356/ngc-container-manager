@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MLEnv Context Management
-# Version: 2.0.0
+# Version: 2.1.0
 # Provides structured context instead of global variables
 
 # Create mlenv context
@@ -11,7 +11,15 @@ mlenv_context_create() {
     local _wd="${WORKDIR:-$(pwd)}"
     local _pn="$(basename "$_wd")"
     local _wh="$(echo "$_wd" | md5sum | cut -c1-8)"
-    local _cn="mlenv-${_pn}-${_wh}"
+    
+    # Add timestamp and PID for uniqueness if MLENV_UNIQUE_NAMES is enabled
+    # This prevents race conditions in concurrent container creation
+    local _unique_suffix=""
+    if [[ "${MLENV_UNIQUE_NAMES:-false}" == "true" ]]; then
+        _unique_suffix="-$(date +%s)-$$"
+    fi
+    
+    local _cn="mlenv-${_pn}-${_wh}${_unique_suffix}"
     local _ld="${_wd}/.mlenv"
     
     # Environment

@@ -4,6 +4,7 @@
 
 # Source dependencies
 source "${MLENV_LIB}/utils/command-helpers.sh"
+source "${MLENV_LIB}/core/gpu.sh"
 
 cmd_rm() {
     # Initialize context
@@ -19,6 +20,10 @@ cmd_rm() {
     
     if container_exists "$container_name"; then
         log "✖ Removing container: $container_name (your code on host is safe)"
+        
+        # Release GPU reservations before removing container
+        gpu_release "$container_name"
+        
         container_remove "$container_name"
         
         # Clean up markers and init script

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # MLEnv Database Initialization
-# Version: 2.0.0
+# Version: 2.1.0
 
 # Source dependencies
 source "${MLENV_LIB}/utils/logging.sh"
 source "${MLENV_LIB}/utils/error.sh"
+source "${MLENV_LIB}/utils/locking.sh"
 
 # Database paths
 MLENV_DB_DIR="${MLENV_VAR:-$HOME/.mlenv}/registry"
@@ -26,7 +27,20 @@ db_init() {
     # Check if database exists
     if [[ -f "$MLENV_DB_FILE" ]]; then
         vlog "Database already exists: $MLENV_DB_FILE"
-        return 0
+        
+        # Verify database integrity
+        if ! db_check; then
+            warn "Database integrity check failed - attempting recovery"
+            if ! db_recover_from_backup; then
+                error "Database recovery failed - reinitializing"
+                mv "$MLENV_DB_FILE" "${MLENV_DB_FILE}.corrupted.$(date +%s)"
+                # Continue to create new database
+            else
+                return 0
+            fi
+        else
+            return 0
+        fi
     fi
     
     # Create database from schema
@@ -37,6 +51,8 @@ db_init() {
     vlog "Creating database from schema..."
     if sqlite3 "$MLENV_DB_FILE" < "$MLENV_SCHEMA_FILE" 2>&1 | tee -a "${MLENV_LOG_FILE:-/dev/null}"; then
         success "Database initialized: $MLENV_DB_FILE"
+        # Create initial backup
+        db_auto_backup
     else
         die "Failed to initialize database"
     fi
@@ -56,8 +72,8 @@ db_check() {
     fi
 }
 
-# Execute SQL query
-db_query() {
+# Execute SQL query (without lock - internal use)
+_db_query_unlocked() {
     local query="$1"
     local format="${2:--column}"  # -column, -json, -csv, etc.
     
@@ -66,6 +82,56 @@ db_query() {
     fi
     
     sqlite3 $format "$MLENV_DB_FILE" "$query"
+}
+
+# Track write operations for periodic backup
+declare -g MLENV_DB_WRITE_COUNT=0
+declare -g MLENV_DB_BACKUP_INTERVAL="${MLENV_DB_BACKUP_INTERVAL:-100}"
+
+# Execute SQL query (with lock for safety)
+db_query() {
+    local query="$1"
+    local format="${2:--column}"
+    
+    # Check if locking is enabled (default: true)
+    local enable_locks="${MLENV_ENABLE_DB_LOCKS:-true}"
+    
+    if [[ "$enable_locks" != "true" ]]; then
+        _db_query_unlocked "$query" "$format"
+        return $?
+    fi
+    
+    # Use lock for write operations (INSERT, UPDATE, DELETE, CREATE, ALTER, DROP)
+    if [[ "$query" =~ ^[[:space:]]*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|REPLACE) ]]; then
+        local timeout="${MLENV_LOCK_TIMEOUT:-30}"
+        
+        # Acquire lock
+        if ! lock_acquire "database" "$timeout"; then
+            error "Failed to acquire database lock"
+            return 1
+        fi
+        
+        # Execute query
+        local exit_code=0
+        _db_query_unlocked "$query" "$format" || exit_code=$?
+        
+        # Release lock
+        lock_release "database"
+        
+        # Periodic backup after N write operations
+        if [[ $exit_code -eq 0 ]]; then
+            ((MLENV_DB_WRITE_COUNT++))
+            if (( MLENV_DB_WRITE_COUNT >= MLENV_DB_BACKUP_INTERVAL )); then
+                db_auto_backup >/dev/null 2>&1 &
+                MLENV_DB_WRITE_COUNT=0
+            fi
+        fi
+        
+        return $exit_code
+    else
+        # Read operations don't need exclusive lock
+        _db_query_unlocked "$query" "$format"
+    fi
 }
 
 # Execute SQL statement (alias for db_query with no format)
@@ -234,4 +300,102 @@ db_export_json() {
         error "Failed to export $table"
         return 1
     fi
+}
+
+# Auto-backup database (called periodically)
+db_auto_backup() {
+    local backup_dir="${MLENV_DB_DIR}/backups"
+    local max_backups="${MLENV_DB_MAX_BACKUPS:-5}"
+    
+    # Create backup directory
+    mkdir -p "$backup_dir" 2>/dev/null || return 0
+    
+    # Generate backup filename with timestamp
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${backup_dir}/catalog_${timestamp}.db"
+    
+    vlog "Auto-backup: $backup_file"
+    
+    # Create backup
+    if cp "$MLENV_DB_FILE" "$backup_file" 2>/dev/null; then
+        vlog "✓ Database backed up"
+        
+        # Clean old backups (keep only last N)
+        local backup_count=$(ls -1 "$backup_dir"/catalog_*.db 2>/dev/null | wc -l)
+        if (( backup_count > max_backups )); then
+            local to_delete=$((backup_count - max_backups))
+            ls -1t "$backup_dir"/catalog_*.db | tail -n "$to_delete" | xargs rm -f 2>/dev/null
+            vlog "Cleaned $to_delete old backups"
+        fi
+    else
+        vlog "Auto-backup failed (non-critical)"
+    fi
+}
+
+# Recover database from most recent backup
+db_recover_from_backup() {
+    local backup_dir="${MLENV_DB_DIR}/backups"
+    
+    if [[ ! -d "$backup_dir" ]]; then
+        error "No backup directory found"
+        return 1
+    fi
+    
+    # Find most recent backup
+    local latest_backup=$(ls -1t "$backup_dir"/catalog_*.db 2>/dev/null | head -1)
+    
+    if [[ -z "$latest_backup" ]]; then
+        error "No backup files found"
+        return 1
+    fi
+    
+    warn "Recovering database from backup: $(basename "$latest_backup")"
+    
+    # Backup corrupted database
+    if [[ -f "$MLENV_DB_FILE" ]]; then
+        mv "$MLENV_DB_FILE" "${MLENV_DB_FILE}.corrupted.$(date +%s)"
+    fi
+    
+    # Restore from backup
+    if cp "$latest_backup" "$MLENV_DB_FILE"; then
+        success "Database recovered from backup"
+        return 0
+    else
+        error "Failed to restore from backup"
+        return 1
+    fi
+}
+
+# Check database integrity
+db_integrity_check() {
+    vlog "Checking database integrity..."
+    
+    local result=$(sqlite3 "$MLENV_DB_FILE" "PRAGMA integrity_check;" 2>/dev/null)
+    
+    if [[ "$result" == "ok" ]]; then
+        vlog "Database integrity: OK"
+        return 0
+    else
+        error "Database integrity check failed: $result"
+        return 1
+    fi
+}
+
+# Periodic maintenance (backup + cleanup)
+db_maintenance() {
+    vlog "Running database maintenance..."
+    
+    # Create backup
+    db_auto_backup
+    
+    # Check integrity
+    if ! db_integrity_check; then
+        warn "Database integrity issues detected"
+    fi
+    
+    # Clean old data
+    local retention_days="${MLENV_METRICS_RETENTION_DAYS:-7}"
+    db_clean_old_data "$retention_days" >/dev/null 2>&1
+    
+    vlog "Database maintenance complete"
 }

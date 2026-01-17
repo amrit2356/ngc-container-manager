@@ -4,8 +4,15 @@
 
 # Source dependencies
 source "${MLENV_LIB}/utils/command-helpers.sh"
+source "${MLENV_LIB}/database/sync.sh"
 
 cmd_status() {
+    # Quick sync check (auto-fix discrepancies)
+    if ! sync_quick_check; then
+        vlog "State discrepancy detected - syncing container state"
+        sync_all_containers >/dev/null 2>&1
+    fi
+    
     # Initialize context
     declare -A ctx
     if ! cmd_init_context ctx; then
