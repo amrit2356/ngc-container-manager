@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # MLEnv Help Command
-# Version: 2.0.0
+# Version: 2.1.0 - Context-based
+
+# Source command helpers
+source "${MLENV_LIB}/utils/command-helpers.sh"
 
 cmd_help() {
+    # Initialize context
+    declare -A ctx
+    cmd_init_context ctx || return 1
+    
+    local version="${ctx[version]}"
+    
     cat <<EOF
-MLEnv - ML Environment Manager v${VERSION}
+MLEnv - ML Environment Manager v${version}
 
 USAGE:
   mlenv <command> [options]
@@ -83,4 +92,5 @@ EXAMPLES:
   
 For more information: https://github.com/your-username/mlenv
 EOF
+    return 0
 }
