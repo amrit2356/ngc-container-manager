@@ -196,13 +196,5 @@ container_find_jupyter_port() {
     return 1
 }
 
-# These functions will be implemented by adapters (interface methods)
-container_exists() {
-    local container_name="$1"
-    die "container_exists not implemented - adapter not loaded"
-}
-
-container_is_running() {
-    local container_name="$1"
-    die "container_is_running not implemented - adapter not loaded"
-}
+# Note: container_exists() and container_is_running() are provided by the adapter interface
+# See: lib/mlenv/adapters/interfaces/container-port.sh

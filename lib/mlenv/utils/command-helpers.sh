@@ -18,6 +18,7 @@ source "${MLENV_LIB}/core/container.sh"
 cmd_init_context() {
     local -n ctx_out=$1
     
+    
     mlenv_context_create ctx_out
     
     if ! mlenv_context_validate ctx_out; then

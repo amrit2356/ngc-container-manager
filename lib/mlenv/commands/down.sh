@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # MLEnv Down Command
-# Version: 2.0.0
+# Version: 2.1.0
+
+# Source dependencies
+source "${MLENV_LIB}/utils/command-helpers.sh"
 
 cmd_down() {
-    # Create context from global state
+    # Initialize context
     declare -A ctx
-    mlenv_context_create ctx
-    
-    if ! mlenv_context_validate ctx; then
-        die "Invalid context"
+    if ! cmd_init_context ctx; then
+        error_with_help "Failed to initialize context" "invalid_argument"
+        return 1
     fi
     
     local container_name="${ctx[container_name]}"

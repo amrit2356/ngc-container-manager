@@ -31,8 +31,8 @@ _cleanup_validate_action() {
         return 1
     fi
     
-    # Whitelist: rm -f, docker/podman rm, or known function calls
-    if [[ "$action" =~ ^(rm[[:space:]]+-f|docker[[:space:]]+rm|podman[[:space:]]+rm|container_remove|image_remove_if_not_used) ]]; then
+    # Whitelist: rm -f, rm -rf for .devcontainer, docker/podman rm, or known function calls
+    if [[ "$action" =~ ^(rm[[:space:]]+-rf[[:space:]]+\'.*\.devcontainer\'|rm[[:space:]]+-f|docker[[:space:]]+rm|podman[[:space:]]+rm|container_remove|image_remove_if_not_used) ]]; then
         return 0
     fi
     

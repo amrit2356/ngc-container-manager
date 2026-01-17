@@ -18,7 +18,7 @@ export NGC_ADAPTER_NAME="ngc"
 
 # Login to NGC registry
 ngc_auth_registry_login() {
-    local api_key="$1"
+    local api_key="${1:-}"
     local registry="${2:-$NGC_REGISTRY}"
     
     vlog "[NGC] Logging into $registry..."
@@ -102,7 +102,7 @@ ngc_auth_registry_get_credentials() {
 
 # Save NGC credentials
 ngc_save_credentials() {
-    local api_key="$1"
+    local api_key="${1:-}"
     local registry="${2:-$NGC_REGISTRY}"
     
     mkdir -p "$NGC_CONFIG_DIR"
@@ -124,7 +124,7 @@ EOF
 
 # Check if image requires NGC authentication
 ngc_check_auth_required() {
-    local image="$1"
+    local image="${1:-}"
     
     # Check if it's an NGC image
     if [[ "$image" != *"nvcr.io"* ]]; then
@@ -148,7 +148,7 @@ ngc_check_auth_required() {
 
 # Validate API key format
 ngc_validate_api_key() {
-    local api_key="$1"
+    local api_key="${1:-}"
     
     # NGC API keys are long alphanumeric strings with dashes
     if [[ -z "$api_key" ]]; then

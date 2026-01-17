@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # MLEnv Status Command
-# Version: 2.0.0
+# Version: 2.1.0
+
+# Source dependencies
+source "${MLENV_LIB}/utils/command-helpers.sh"
 
 cmd_status() {
-    # Create context from global state (for now)
+    # Initialize context
     declare -A ctx
-    mlenv_context_create ctx
-    
-    # Validate context
-    if ! mlenv_context_validate ctx; then
-        die "Invalid context"
+    if ! cmd_init_context ctx; then
+        error_with_help "Failed to initialize context" "invalid_argument"
+        return 1
     fi
     
-    # Use context variables instead of globals
+    # Use context variables
     local container_name="${ctx[container_name]}"
     local workdir="${ctx[workdir]}"
     local status=$(container_get_status "$container_name")
