@@ -22,9 +22,9 @@ source "${MLENV_LIB}/core/image.sh"
 source "${MLENV_LIB}/core/auth.sh"
 source "${MLENV_LIB}/core/devcontainer.sh"
 
-source "${MLENV_LIB}/ports/container-port.sh"
-source "${MLENV_LIB}/ports/image-port.sh"
-source "${MLENV_LIB}/ports/auth-port.sh"
+source "${MLENV_LIB}/adapters/interfaces/container-port.sh"
+source "${MLENV_LIB}/adapters/interfaces/image-port.sh"
+source "${MLENV_LIB}/adapters/interfaces/auth-port.sh"
 
 # Global state
 export MLENV_ACTIVE_CONTAINER_ADAPTER=""

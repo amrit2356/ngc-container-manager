@@ -175,3 +175,63 @@ normalize_boolean() {
             ;;
     esac
 }
+
+# Validate Docker is available
+validate_docker() {
+    if ! command -v docker &>/dev/null; then
+        error "Docker is not installed or not in PATH"
+        info "Install Docker: https://docs.docker.com/get-docker/"
+        return 1
+    fi
+    
+    if ! docker info &>/dev/null; then
+        error "Docker daemon is not running"
+        info "Start Docker and try again"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate workspace directory
+validate_workspace() {
+    local workdir="$1"
+    
+    if [[ ! -d "$workdir" ]]; then
+        error "Workspace directory does not exist: $workdir"
+        return 1
+    fi
+    
+    if [[ ! -w "$workdir" ]]; then
+        error "Workspace directory is not writable: $workdir"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate requirements file
+validate_requirements_file() {
+    local file="$1"
+    
+    if [[ -z "$file" ]]; then
+        return 0
+    fi
+    
+    if [[ ! -f "$file" ]]; then
+        error "Requirements file not found: $file"
+        return 1
+    fi
+    
+    if [[ ! -r "$file" ]]; then
+        error "Requirements file is not readable: $file"
+        return 1
+    fi
+    
+    # Basic syntax check
+    if grep -q '[^a-zA-Z0-9_=<>!.,-]' "$file" 2>/dev/null; then
+        warn "Requirements file may contain invalid characters"
+    fi
+    
+    return 0
+}

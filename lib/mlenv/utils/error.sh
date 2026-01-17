@@ -100,3 +100,78 @@ die_with_code() {
     
     die "$message" "$code"
 }
+
+# Show helpful error with context
+error_with_help() {
+    local message="$1"
+    local help_text="$2"
+    
+    error "$message"
+    if [[ -n "$help_text" ]]; then
+        echo "" >&2
+        info "$help_text"
+    fi
+}
+
+# Container error with common solutions
+container_error() {
+    local message="$1"
+    local container_name="${2:-}"
+    
+    error "$message"
+    echo "" >&2
+    info "Common solutions:"
+    info "  • Check if Docker daemon is running: docker info"
+    if [[ -n "$container_name" ]]; then
+        info "  • Check container logs: mlenv logs"
+        info "  • Remove container and retry: mlenv rm"
+    fi
+    info "  • Check Docker permissions: docker ps"
+    info "  • Restart Docker daemon"
+}
+
+# Image error with pull suggestion
+image_error() {
+    local message="$1"
+    local image="${2:-}"
+    
+    error "$message"
+    echo "" >&2
+    if [[ -n "$image" ]]; then
+        info "To manually pull the image:"
+        info "  docker pull $image"
+        echo "" >&2
+        info "Or specify a different image:"
+        info "  mlenv up --image <image-name>"
+    fi
+}
+
+# Permission error with sudo hint
+permission_error() {
+    local message="$1"
+    local resource="${2:-}"
+    
+    error "$message"
+    echo "" >&2
+    info "This may be a permission issue. Try:"
+    if [[ -n "$resource" ]]; then
+        info "  • Check permissions: ls -la $resource"
+        info "  • Add yourself to docker group: sudo usermod -aG docker \$USER"
+    else
+        info "  • Add yourself to docker group: sudo usermod -aG docker \$USER"
+    fi
+    info "  • Log out and back in for group changes to take effect"
+}
+
+# Validation error with format example
+validation_error() {
+    local field="$1"
+    local value="$2"
+    local expected_format="$3"
+    
+    error "Invalid $field: $value"
+    if [[ -n "$expected_format" ]]; then
+        echo "" >&2
+        info "Expected format: $expected_format"
+    fi
+}

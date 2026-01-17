@@ -5,54 +5,61 @@
 
 # Create mlenv context
 mlenv_context_create() {
-    local -n ctx=$1
+    local -n _ctx_ref=$1
+    
+    # Get workdir first
+    local _wd="${WORKDIR:-$(pwd)}"
+    local _pn="$(basename "$_wd")"
+    local _wh="$(echo "$_wd" | md5sum | cut -c1-8)"
+    local _cn="mlenv-${_pn}-${_wh}"
+    local _ld="${_wd}/.mlenv"
     
     # Environment
-    ctx[version]="2.0.0"
-    ctx[workdir]="${WORKDIR:-$(pwd)}"
-    ctx[project_name]="$(basename "${ctx[workdir]}")"
-    ctx[workdir_hash]="$(echo "${ctx[workdir]}" | md5sum | cut -c1-8)"
+    _ctx_ref[version]="2.0.0"
+    _ctx_ref[workdir]="$_wd"
+    _ctx_ref[project_name]="$_pn"
+    _ctx_ref[workdir_hash]="$_wh"
     
     # Container
-    ctx[container_name]="mlenv-${ctx[project_name]}-${ctx[workdir_hash]}"
+    _ctx_ref[container_name]="$_cn"
     
     # Paths
-    ctx[log_dir]="${ctx[workdir]}/.mlenv"
-    ctx[log_file]="${ctx[log_dir]}/mlenv.log"
-    ctx[requirements_marker]="${ctx[log_dir]}/.requirements_installed"
+    _ctx_ref[log_dir]="$_ld"
+    _ctx_ref[log_file]="${_ld}/mlenv.log"
+    _ctx_ref[requirements_marker]="${_ld}/.requirements_installed"
     
     # Command-line options (populated from global vars for compatibility)
-    ctx[image]="${IMAGE:-}"
-    ctx[requirements_path]="${REQUIREMENTS_PATH:-}"
-    ctx[force_requirements]="${FORCE_REQUIREMENTS:-false}"
-    ctx[verbose]="${VERBOSE:-false}"
-    ctx[ports]="${PORTS:-}"
-    ctx[jupyter_port]="${JUPYTER_PORT:-}"
-    ctx[gpu_devices]="${GPU_DEVICES:-}"
-    ctx[env_file]="${ENV_FILE:-}"
-    ctx[memory_limit]="${MEMORY_LIMIT:-}"
-    ctx[cpu_limit]="${CPU_LIMIT:-}"
-    ctx[run_as_user]="${RUN_AS_USER:-true}"
-    ctx[exec_cmd]="${EXEC_CMD:-}"
+    _ctx_ref[image]="${IMAGE:-}"
+    _ctx_ref[requirements_path]="${REQUIREMENTS_PATH:-}"
+    _ctx_ref[force_requirements]="${FORCE_REQUIREMENTS:-false}"
+    _ctx_ref[verbose]="${VERBOSE:-false}"
+    _ctx_ref[ports]="${PORTS:-}"
+    _ctx_ref[jupyter_port]="${JUPYTER_PORT:-}"
+    _ctx_ref[gpu_devices]="${GPU_DEVICES:-}"
+    _ctx_ref[env_file]="${ENV_FILE:-}"
+    _ctx_ref[memory_limit]="${MEMORY_LIMIT:-}"
+    _ctx_ref[cpu_limit]="${CPU_LIMIT:-}"
+    _ctx_ref[run_as_user]="${RUN_AS_USER:-true}"
+    _ctx_ref[exec_cmd]="${EXEC_CMD:-}"
     
-    vlog "Context created for project: ${ctx[project_name]}"
+    vlog "Context created for project: $_pn"
 }
 
 # Validate context has required fields
 mlenv_context_validate() {
-    local -n ctx=$1
+    local -n _ctx_ref=$1
     
-    if [[ -z "${ctx[workdir]}" ]]; then
+    if [[ -z "${_ctx_ref[workdir]}" ]]; then
         error "Context missing workdir"
         return 1
     fi
     
-    if [[ -z "${ctx[container_name]}" ]]; then
+    if [[ -z "${_ctx_ref[container_name]}" ]]; then
         error "Context missing container_name"
         return 1
     fi
     
-    if [[ -z "${ctx[project_name]}" ]]; then
+    if [[ -z "${_ctx_ref[project_name]}" ]]; then
         error "Context missing project_name"
         return 1
     fi
@@ -62,57 +69,57 @@ mlenv_context_validate() {
 
 # Export context to environment (for backward compatibility with existing code)
 mlenv_context_export() {
-    local -n ctx=$1
+    local -n _ctx_ref=$1
     
-    export WORKDIR="${ctx[workdir]}"
-    export PROJECT_NAME="${ctx[project_name]}"
-    export WORKDIR_HASH="${ctx[workdir_hash]}"
-    export CONTAINER_NAME="${ctx[container_name]}"
-    export LOG_DIR="${ctx[log_dir]}"
-    export LOG_FILE="${ctx[log_file]}"
-    export REQUIREMENTS_MARKER="${ctx[requirements_marker]}"
-    export IMAGE="${ctx[image]}"
-    export REQUIREMENTS_PATH="${ctx[requirements_path]}"
-    export FORCE_REQUIREMENTS="${ctx[force_requirements]}"
-    export VERBOSE="${ctx[verbose]}"
-    export PORTS="${ctx[ports]}"
-    export JUPYTER_PORT="${ctx[jupyter_port]}"
-    export GPU_DEVICES="${ctx[gpu_devices]}"
-    export ENV_FILE="${ctx[env_file]}"
-    export MEMORY_LIMIT="${ctx[memory_limit]}"
-    export CPU_LIMIT="${ctx[cpu_limit]}"
-    export RUN_AS_USER="${ctx[run_as_user]}"
-    export EXEC_CMD="${ctx[exec_cmd]}"
+    export WORKDIR="${_ctx_ref[workdir]}"
+    export PROJECT_NAME="${_ctx_ref[project_name]}"
+    export WORKDIR_HASH="${_ctx_ref[workdir_hash]}"
+    export CONTAINER_NAME="${_ctx_ref[container_name]}"
+    export LOG_DIR="${_ctx_ref[log_dir]}"
+    export LOG_FILE="${_ctx_ref[log_file]}"
+    export REQUIREMENTS_MARKER="${_ctx_ref[requirements_marker]}"
+    export IMAGE="${_ctx_ref[image]}"
+    export REQUIREMENTS_PATH="${_ctx_ref[requirements_path]}"
+    export FORCE_REQUIREMENTS="${_ctx_ref[force_requirements]}"
+    export VERBOSE="${_ctx_ref[verbose]}"
+    export PORTS="${_ctx_ref[ports]}"
+    export JUPYTER_PORT="${_ctx_ref[jupyter_port]}"
+    export GPU_DEVICES="${_ctx_ref[gpu_devices]}"
+    export ENV_FILE="${_ctx_ref[env_file]}"
+    export MEMORY_LIMIT="${_ctx_ref[memory_limit]}"
+    export CPU_LIMIT="${_ctx_ref[cpu_limit]}"
+    export RUN_AS_USER="${_ctx_ref[run_as_user]}"
+    export EXEC_CMD="${_ctx_ref[exec_cmd]}"
     
     vlog "Context exported to environment variables"
 }
 
 # Get context value
 mlenv_context_get() {
-    local -n ctx=$1
-    local key="$2"
-    local default="${3:-}"
+    local -n _ctx_ref=$1
+    local _key="$2"
+    local _default="${3:-}"
     
-    if [[ -n "${ctx[$key]:-}" ]]; then
-        echo "${ctx[$key]}"
+    if [[ -n "${_ctx_ref[$_key]:-}" ]]; then
+        echo "${_ctx_ref[$_key]}"
     else
-        echo "$default"
+        echo "$_default"
     fi
 }
 
 # Set context value
 mlenv_context_set() {
-    local -n ctx=$1
-    local key="$2"
-    local value="$3"
+    local -n _ctx_ref=$1
+    local _key="$2"
+    local _value="$3"
     
-    ctx[$key]="$value"
-    vlog "Context: $key = $value"
+    _ctx_ref[$_key]="$_value"
+    vlog "Context: $_key = $_value"
 }
 
 # Print context for debugging
 mlenv_context_print() {
-    local -n ctx=$1
+    local -n _ctx_ref=$1
     
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "MLEnv Context"
@@ -120,22 +127,22 @@ mlenv_context_print() {
     
     echo ""
     echo "[Project]"
-    echo "  workdir        = ${ctx[workdir]}"
-    echo "  project_name   = ${ctx[project_name]}"
-    echo "  container_name = ${ctx[container_name]}"
+    echo "  workdir        = ${_ctx_ref[workdir]}"
+    echo "  project_name   = ${_ctx_ref[project_name]}"
+    echo "  container_name = ${_ctx_ref[container_name]}"
     
     echo ""
     echo "[Paths]"
-    echo "  log_dir        = ${ctx[log_dir]}"
-    echo "  log_file       = ${ctx[log_file]}"
+    echo "  log_dir        = ${_ctx_ref[log_dir]}"
+    echo "  log_file       = ${_ctx_ref[log_file]}"
     
-    if [[ -n "${ctx[image]}" ]] || [[ -n "${ctx[gpu_devices]}" ]] || [[ -n "${ctx[ports]}" ]]; then
+    if [[ -n "${_ctx_ref[image]}" ]] || [[ -n "${_ctx_ref[gpu_devices]}" ]] || [[ -n "${_ctx_ref[ports]}" ]]; then
         echo ""
         echo "[Options]"
-        [[ -n "${ctx[image]}" ]] && echo "  image          = ${ctx[image]}"
-        [[ -n "${ctx[gpu_devices]}" ]] && echo "  gpu_devices    = ${ctx[gpu_devices]}"
-        [[ -n "${ctx[ports]}" ]] && echo "  ports          = ${ctx[ports]}"
-        [[ -n "${ctx[requirements_path]}" ]] && echo "  requirements   = ${ctx[requirements_path]}"
+        [[ -n "${_ctx_ref[image]}" ]] && echo "  image          = ${_ctx_ref[image]}"
+        [[ -n "${_ctx_ref[gpu_devices]}" ]] && echo "  gpu_devices    = ${_ctx_ref[gpu_devices]}"
+        [[ -n "${_ctx_ref[ports]}" ]] && echo "  ports          = ${_ctx_ref[ports]}"
+        [[ -n "${_ctx_ref[requirements_path]}" ]] && echo "  requirements   = ${_ctx_ref[requirements_path]}"
     fi
     
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
