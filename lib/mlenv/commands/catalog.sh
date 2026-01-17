@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MLEnv Catalog Command
-# Version: 2.0.0
+# Version: 2.1.0 - Context-based
 
 cmd_catalog() {
     # Source catalog module
@@ -11,43 +11,76 @@ cmd_catalog() {
     
     case "$subcmd" in
         init)
-            catalog_init
+            catalog_init || {
+                error_with_help "Failed to initialize catalog" "config_error"
+                return 1
+            }
             ;;
         search)
             local query="${1:-}"
             local category="${2:-}"
-            catalog_search "$query" "$category"
+            catalog_search "$query" "$category" || {
+                error_with_help "Search failed" "config_error"
+                return 1
+            }
             ;;
         list)
-            catalog_list_popular
+            catalog_list_popular || {
+                error_with_help "Failed to list catalog" "config_error"
+                return 1
+            }
             ;;
         add)
             if [[ $# -lt 2 ]]; then
-                die "Usage: mlenv catalog add <org> <name> [display_name] [category] [description]"
+                error_with_help "Organization and name required" "invalid_argument"
+                info "Usage: mlenv catalog add <org> <name> [display_name] [category] [description]"
+                return 1
             fi
-            catalog_add_image "$@"
+            catalog_add_image "$@" || {
+                error_with_help "Failed to add image" "config_error"
+                return 1
+            }
             ;;
         remove)
             if [[ $# -lt 2 ]]; then
-                die "Usage: mlenv catalog remove <org> <name>"
+                error_with_help "Organization and name required" "invalid_argument"
+                info "Usage: mlenv catalog remove <org> <name>"
+                return 1
             fi
-            catalog_remove_image "$1" "$2"
+            catalog_remove_image "$1" "$2" || {
+                error_with_help "Failed to remove image" "config_error"
+                return 1
+            }
             ;;
         stats)
-            catalog_stats
+            catalog_stats || {
+                error_with_help "Failed to show stats" "config_error"
+                return 1
+            }
             ;;
         categories)
-            catalog_list_categories
+            catalog_list_categories || {
+                error_with_help "Failed to list categories" "config_error"
+                return 1
+            }
             ;;
         export)
             local output="${1:-ngc_catalog.json}"
-            catalog_export "$output"
+            catalog_export "$output" || {
+                error_with_help "Failed to export catalog" "config_error"
+                return 1
+            }
             ;;
         import)
             if [[ -z "$1" ]]; then
-                die "Usage: mlenv catalog import <file>"
+                error_with_help "Import file required" "invalid_argument"
+                info "Usage: mlenv catalog import <file>"
+                return 1
             fi
-            catalog_import "$1"
+            catalog_import "$1" || {
+                error_with_help "Failed to import catalog" "config_error"
+                return 1
+            }
             ;;
         *)
             echo "Usage: mlenv catalog {init|search|list|add|remove|stats|categories|export|import}"
@@ -62,6 +95,9 @@ cmd_catalog() {
             echo "  categories              List all categories"
             echo "  export [file]           Export catalog to JSON"
             echo "  import <file>           Import catalog from JSON"
+            return 1
             ;;
     esac
+    
+    return 0
 }

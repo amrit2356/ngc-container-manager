@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # MLEnv Init Command
-# Version: 2.0.0
+# Version: 2.1.0 - Context-based
+
+# Source command helpers
+source "${MLENV_LIB}/utils/command-helpers.sh"
 
 cmd_init() {
     # Source template engine
     source "${MLENV_LIB}/templates/engine.sh"
     
     # Initialize template system
-    template_init
+    template_init || {
+        error_with_help "Failed to initialize template system" "config_error"
+        return 1
+    }
     
     # Parse flags
     local list_templates=false
@@ -68,10 +74,22 @@ cmd_init() {
         final_project_name="$(basename "$(pwd)")"
     fi
     
+    # Validate project name if provided
+    if [[ -n "$project_name" ]]; then
+        if ! validate_project_name "$project_name"; then
+            error_with_help "Invalid project name: $project_name" "invalid_argument"
+            info "Project names must start with alphanumeric and contain only [a-zA-Z0-9_.-]"
+            return 1
+        fi
+    fi
+    
     # If project name provided and directory doesn't exist, create it
     if [[ -n "$project_name" ]] && [[ ! -d "$project_dir" ]]; then
         info "Creating project directory: $project_dir"
-        mkdir -p "$project_dir" || die "Failed to create directory: $project_dir"
+        mkdir -p "$project_dir" || {
+            error_with_help "Failed to create directory: $project_dir" "permission_denied"
+            return 1
+        }
     fi
     
     # Check if directory is empty (unless it's current directory)
@@ -127,7 +145,7 @@ cmd_init() {
     template_apply "$template_name" "$project_dir" "$final_project_name" || true
     local apply_result=$?
     
-    # Return to original directory if template_apply changed it
+    # Return to original directory and handle result
     if [[ "$apply_result" -eq 0 ]]; then
         # template_apply succeeded, now create .mlenvrc in the project directory
         local abs_project_dir
@@ -181,7 +199,10 @@ cmd_init() {
         
         # Return to original directory
         cd "$orig_dir" || true
+        return 0
     else
-        die "Template apply failed"
+        error_with_help "Template apply failed" "config_error"
+        cd "$orig_dir" || true
+        return 1
     fi
 }
