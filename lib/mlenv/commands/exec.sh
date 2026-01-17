@@ -57,11 +57,21 @@ cmd_exec() {
     else
         # Interactive bash (inherently safe - no user input in command string)
         vlog "Opening interactive shell in container: $container_name"
-        docker exec -it $exec_user "$container_name" bash || {
+        
+        # Execute interactive shell
+        # Note: Exit code from interactive shell is normal (user's last command or exit)
+        # We only check if docker exec itself failed (container not found, etc)
+        docker exec -it $exec_user "$container_name" bash
+        local exit_code=$?
+        
+        # Only treat certain exit codes as actual errors (127 = command not found, 126 = not executable)
+        # Exit codes 0-125 are from user's session and are normal
+        if (( exit_code == 126 || exit_code == 127 )); then
             error_with_help "Failed to open interactive shell" "container_error"
             return 1
-        }
+        fi
+        
+        # Return the user's exit code (allows scripts to check: mlenv exec && echo "success")
+        return $exit_code
     fi
-    
-    return 0
 }
