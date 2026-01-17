@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="assets/favicon.png" width="48" alt="MLEnv Favicon">
+</p>
+
+<p align="center">
+  <img src="assets/mlenv-banner.png" width="260" alt="MLEnv Logo">
+</p>
+
 # MLEnv - ML Environment Manager
 
 ![Version](https://img.shields.io/badge/version-2.0.0-blue)
